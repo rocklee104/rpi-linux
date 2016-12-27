@@ -270,6 +270,7 @@ long ubifs_destroy_tnc_subtree(struct ubifs_znode *znode)
  * is wrong with it, this function prints complaint messages and returns
  * %-EINVAL.
  */
+/* 从flash上读取indexing node,填充znode */
 static int read_znode(struct ubifs_info *c, int lnum, int offs, int len,
 		      struct ubifs_znode *znode)
 {
@@ -302,6 +303,7 @@ static int read_znode(struct ubifs_info *c, int lnum, int offs, int len,
 	}
 
 	for (i = 0; i < znode->child_cnt; i++) {
+		/* 为每一个child分配zbranch */
 		const struct ubifs_branch *br = ubifs_idx_branch(c, idx, i);
 		struct ubifs_zbranch *zbr = &znode->zbranch[i];
 
@@ -334,6 +336,7 @@ static int read_znode(struct ubifs_info *c, int lnum, int offs, int len,
 			goto out_dump;
 		}
 
+		/* 还没到level 0 */
 		if (znode->level)
 			continue;
 
@@ -362,6 +365,7 @@ static int read_znode(struct ubifs_info *c, int lnum, int offs, int len,
 	 * Ensure that the next key is greater or equivalent to the
 	 * previous one.
 	 */
+	/* 确保key值从小到大排列 */
 	for (i = 0; i < znode->child_cnt - 1; i++) {
 		const union ubifs_key *key1, *key2;
 
@@ -403,6 +407,7 @@ out_dump:
  * returns pointer to it in case of success and a negative error code in case
  * of failure.
  */
+/* 从flash上将indexing node读取出来,填充znode,并把znode加入TNC */
 struct ubifs_znode *ubifs_load_znode(struct ubifs_info *c,
 				     struct ubifs_zbranch *zbr,
 				     struct ubifs_znode *parent, int iip)

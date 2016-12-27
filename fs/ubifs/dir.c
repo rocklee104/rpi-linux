@@ -248,8 +248,10 @@ static int ubifs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	struct inode *inode;
 	struct ubifs_info *c = dir->i_sb->s_fs_info;
 	int err, sz_change = CALC_DENT_SIZE(dentry->d_name.len);
+	/* 表示当前会增加一个inode, 一个dentry, 会弄脏一个inode */
 	struct ubifs_budget_req req = { .new_ino = 1, .new_dent = 1,
 					.dirtied_ino = 1 };
+	/* 通过vfs_inode获取ubifs_inode */
 	struct ubifs_inode *dir_ui = ubifs_inode(dir);
 
 	/*

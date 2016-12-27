@@ -299,6 +299,7 @@ static int write_head(struct ubifs_info *c, int jhead, void *buf, int len,
 	err = ubifs_wbuf_write_nolock(wbuf, buf, len);
 	if (err)
 		return err;
+	/* 如果需要同步的话,就把刚才写入wbuf中的数据马上冲刷到ubi */
 	if (sync)
 		err = ubifs_wbuf_sync_nolock(wbuf);
 	return err;
@@ -320,6 +321,7 @@ static int write_head(struct ubifs_info *c, int jhead, void *buf, int len,
  * the commit lock has to be released after the data has been added to the
  * TNC.
  */
+/* 在journal区域保留空间 */
 static int make_reservation(struct ubifs_info *c, int jhead, int len)
 {
 	int err, cmt_retries = 0, nospc_retries = 0;
@@ -572,8 +574,10 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 	aligned_dlen = ALIGN(dlen, 8);
 	aligned_ilen = ALIGN(ilen, 8);
 
+	/* | dent node(key:dir ino, inum:inode ino) | name | ino node| ino data | dir ino node | dir data |*/
 	len = aligned_dlen + aligned_ilen + UBIFS_INO_NODE_SZ;
 	/* Make sure to also account for extended attributes */
+	/* 即使host_ui有数据,其data_len也是0? */
 	len += host_ui->data_len;
 
 	dent = kmalloc(len, GFP_NOFS);
@@ -602,9 +606,12 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 	zero_dent_node_unused(dent);
 	ubifs_prep_grp_node(c, dent, dlen, 0);
 
+	/* 获取xdent或者dent的ubifs_ino_node */
 	ino = (void *)dent + aligned_dlen;
+	/* 通过vfs inode构建ubifs_ino_node */
 	pack_inode(c, ino, inode, 0);
 	ino = (void *)ino + aligned_ilen;
+	/* 通过vfs inode构建dir的ubifs_ino_node */
 	pack_inode(c, ino, dir, 1);
 
 	if (last_reference) {
@@ -622,6 +629,7 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 	if (!sync) {
 		struct ubifs_wbuf *wbuf = &c->jheads[BASEHD].wbuf;
 
+		/* wbuf记录dir和inode的ino */
 		ubifs_wbuf_add_ino_nolock(wbuf, inode->i_ino);
 		ubifs_wbuf_add_ino_nolock(wbuf, dir->i_ino);
 	}
@@ -634,6 +642,7 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 			goto out_ro;
 		err = ubifs_add_dirt(c, lnum, dlen);
 	} else
+		/* 将dent_key加入TNC */
 		err = ubifs_tnc_add_nm(c, &dent_key, lnum, dent_offs, dlen, nm);
 	if (err)
 		goto out_ro;
@@ -644,12 +653,14 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 	 * Instead, the inode has been added to orphan lists and the orphan
 	 * subsystem will take further care about it.
 	 */
+	/* 将inode的key加入TNC */
 	ino_key_init(c, &ino_key, inode->i_ino);
 	ino_offs = dent_offs + aligned_dlen;
 	err = ubifs_tnc_add(c, &ino_key, lnum, ino_offs, ilen);
 	if (err)
 		goto out_ro;
 
+	/* 将dir的key加入TNC */
 	ino_key_init(c, &ino_key, dir->i_ino);
 	ino_offs += aligned_ilen;
 	err = ubifs_tnc_add(c, &ino_key, lnum, ino_offs,
@@ -781,6 +792,9 @@ out_free:
  * synchronous, it also synchronizes the write-buffer. Returns zero in case of
  * success and a negative error code in case of failure.
  */
+/*
+ * 将@inode写入journal,如果inode有同步标志,就会同步wbuf.
+ */
 int ubifs_jnl_write_inode(struct ubifs_info *c, const struct inode *inode)
 {
 	int err, lnum, offs;
@@ -795,6 +809,7 @@ int ubifs_jnl_write_inode(struct ubifs_info *c, const struct inode *inode)
 	 * need to synchronize the write-buffer either.
 	 */
 	if (!last_reference) {
+		/* 不是删除 */
 		len += ui->data_len;
 		sync = IS_SYNC(inode);
 	}
@@ -817,6 +832,7 @@ int ubifs_jnl_write_inode(struct ubifs_info *c, const struct inode *inode)
 	release_head(c, BASEHD);
 
 	if (last_reference) {
+		/* 需要删除inode */
 		err = ubifs_tnc_remove_ino(c, inode->i_ino);
 		if (err)
 			goto out_ro;
@@ -876,6 +892,18 @@ out_free:
  *
  * This function returns zero in case of success and a negative error code in
  * case of failure.
+ */
+/*
+ * 这个函数删除inode(包括从orphans及TNC中删除inode),在一些情况下,将一个删除的inode
+ * 写入journal.
+ *
+ * 当普通文件inode被unlink或者目录inode被移除,ubifs_jnl_update写入相应的deletion
+ * inode以及direntry到flash,并且向orphans添加inode.在这之后,当这个inode的最后一个
+ * 引用被移除,当前函数就被调用.一般来说,这个函数必须写入flash一个以上的inode.因为
+ * 如果在ubifs_jnl_update及ubifs_jnl_delete_inode之间发生commit,deletion inode就
+ * 不会在journal中了,实际上这个delete inode可能都不在flash上了,因为它可能被垃圾回收
+ * 了.由于优化的原因,如果UBIFS卸载的干净,它都不读取orphan area,所以当有一个delete
+ * inode从TNC中移除,journal都不会收到任何通知
  */
 int ubifs_jnl_delete_inode(struct ubifs_info *c, const struct inode *inode)
 {

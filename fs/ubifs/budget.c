@@ -180,8 +180,10 @@ int ubifs_calc_min_idx_lebs(struct ubifs_info *c)
 	int idx_lebs;
 	long long idx_size;
 
+	/* 磁盘上index占用的空间 + index预计增加的空间 + 还没有commit的index */
 	idx_size = c->bi.old_idx_sz + c->bi.idx_growth + c->bi.uncommitted_idx;
 	/* And make sure we have thrice the index size of space reserved */
+	/* 预留3倍的空间 */
 	idx_size += idx_size << 1;
 	/*
 	 * We do not maintain 'old_idx_size' as 'old_idx_lebs'/'old_idx_bytes'
@@ -206,6 +208,7 @@ int ubifs_calc_min_idx_lebs(struct ubifs_info *c)
  *
  * This function calculates and returns amount of FS space available for use.
  */
+/* 计算可用的文件系统空间 */
 long long ubifs_calc_available(const struct ubifs_info *c, int min_idx_lebs)
 {
 	int subtract_lebs;
@@ -270,6 +273,7 @@ long long ubifs_calc_available(const struct ubifs_info *c, int min_idx_lebs)
  * This function checks whether current user is allowed to use reserved pool.
  * Returns %1  current user is allowed to use reserved pool and %0 otherwise.
  */
+/* 判断user是否能够使用reserved pool */
 static int can_use_rp(struct ubifs_info *c)
 {
 	if (uid_eq(current_fsuid(), c->rp_uid) || capable(CAP_SYS_RESOURCE) ||
@@ -303,6 +307,17 @@ static int can_use_rp(struct ubifs_info *c)
  * This function returns zero in case of success, and %-ENOSPC in case of
  * failure.
  */
+/*
+ * 给增长的index和data预留flash空间,确保UBIFS有足够的LEB给index及数据增长.
+ * 当给index space做budgeting时,UBIFS保留3倍的LEB,如果index要被合并然后写入
+ * flash.
+ *
+ * @c->lst.idx_lebs是当前index使用的LEB数量.可能会很大,因为只要有空闲空间,
+ * UBIFS就不会进行任何index合并.换句话说,index可能会占用很多LEB,但是这些LEB
+ * 将会包含很多脏数据.
+ * @c->bi.min_idx_lebs是index可能会占用的LEB数量.换句话说,index可能被合并而
+ * 达到@c->bi.min_idx_lebs的数量
+ */
 static int do_budget_space(struct ubifs_info *c)
 {
 	long long outstanding, available;
@@ -312,6 +327,7 @@ static int do_budget_space(struct ubifs_info *c)
 	min_idx_lebs = ubifs_calc_min_idx_lebs(c);
 
 	/* Now 'min_idx_lebs' contains number of LEBs to reserve */
+	/* min_idx_lebs中包含了需要保留的LEB的数量 */
 	if (min_idx_lebs > c->lst.idx_lebs)
 		rsvd_idx_lebs = min_idx_lebs - c->lst.idx_lebs;
 	else
@@ -338,6 +354,10 @@ static int do_budget_space(struct ubifs_info *c)
 	 * Note, @c->lst.taken_empty_lebs may temporarily be higher by one
 	 * because of the way we serialize LEB allocations and budgeting. See a
 	 * comment in 'ubifs_find_free_space()'.
+	 */
+	/*
+	 * 磁盘上能腾出来的最大空间 = 空闲空间LEB个数 + 能够被释放的LEB个数 + 要被垃圾回收的个数 - 被占用的空闲LEB个数.
+	 * @idx_gc_cnt含了@taken_empty_lebs
 	 */
 	lebs = c->lst.empty_lebs + c->freeable_cnt + c->idx_gc_cnt -
 	       c->lst.taken_empty_lebs;
@@ -387,6 +407,7 @@ static int calc_idx_growth(const struct ubifs_info *c,
  * @c: UBIFS file-system description object
  * @req: budgeting request
  */
+/* 预计data增长多少 */
 static int calc_data_growth(const struct ubifs_info *c,
 			    const struct ubifs_budget_req *req)
 {
@@ -395,8 +416,10 @@ static int calc_data_growth(const struct ubifs_info *c,
 	data_growth = req->new_ino  ? c->bi.inode_budget : 0;
 	if (req->new_page)
 		data_growth += c->bi.page_budget;
+	/* 预计目录项增长多少 */
 	if (req->new_dent)
 		data_growth += c->bi.dent_budget;
+	/* 预计inode数据增长多少 */
 	data_growth += req->new_ino_d;
 	return data_growth;
 }
@@ -407,6 +430,7 @@ static int calc_data_growth(const struct ubifs_info *c,
  * @c: UBIFS file-system description object
  * @req: budgeting request
  */
+/* 修改的内容需要回写,计算这部分需要的空间 */
 static int calc_dd_growth(const struct ubifs_info *c,
 			  const struct ubifs_budget_req *req)
 {
@@ -435,6 +459,13 @@ static int calc_dd_growth(const struct ubifs_info *c,
  * %-ENOSPC if there is no free space and other negative error codes in case of
  * failures.
  */
+/*
+ * ubifs_budget_space - 保证有足够空间完成操作.
+ *
+ * 这个函数为操作分配budget.它对一个操作需要多少空间采用悲观预测.这个函数的目的
+ * 在于确保UBIFS总是有flash空间去flush所有的dirty pages,dirty, inodes以及dirty znodes.
+ * 这个函数可能会强制commit,gc或者write-back.返回0表示成功.返回-ENOSPC表示没有空间.
+ */
 int ubifs_budget_space(struct ubifs_info *c, struct ubifs_budget_req *req)
 {
 	int err, idx_growth, data_growth, dd_growth, retried = 0;
@@ -452,6 +483,7 @@ int ubifs_budget_space(struct ubifs_info *c, struct ubifs_budget_req *req)
 
 	data_growth = calc_data_growth(c, req);
 	dd_growth = calc_dd_growth(c, req);
+	/* 不需要预留空间 */
 	if (!data_growth && !dd_growth)
 		return 0;
 	idx_growth = calc_idx_growth(c, req);

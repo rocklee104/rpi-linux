@@ -402,25 +402,52 @@ struct ubifs_gced_idx_leb {
  * are changed under @ui_mutex, so they do not need "shadow" fields. Note, one
  * could consider to rework locking and base it on "shadow" fields.
  */
+/* UBIFS内存中的inode描述符 */
 struct ubifs_inode {
 	struct inode vfs_inode;
+	/* 创建时候的sqnum */
 	unsigned long long creat_sqnum;
+	/* inode被删除时候的commit no,由@c->commit_sem保护 */
 	unsigned long long del_cmtno;
+	/* 拓展属性的总大小(in bytes),包括xdent node, name, xattr inode node大小及其data,以8byte对齐 */
 	unsigned int xattr_size;
+	/* 这个inode拥有的拓展属性的个数 */
 	unsigned int xattr_cnt;
+	/* 这个inode拥有的拓展属性名字的总长度 */
 	unsigned int xattr_names;
+	/* 非0表示inode dirty */
 	unsigned int dirty:1;
+	/* 非0表示这是一个拓展属性inode */
 	unsigned int xattr:1;
+	/* 非0表示使用bulk read */
 	unsigned int bulk_read:1;
+	/* 这个inode默认使用的压缩算法 */
 	unsigned int compr_type:2;
+	/*
+	 * 1.保证inode write-back和其他的vfs操作串行.
+	 * 2.保证"clean <-> dirty"状态改变串行.
+	 * 3.保证bulk-read串行.
+	 * 4.保护@dirty, @bulk_read, @ui_size, and @xattr_size
+	 */
 	struct mutex ui_mutex;
+	/* 保护@synced_i_size */
 	spinlock_t ui_lock;
+	/*
+	 * 已经同步的inode大小,即在flash中保存的inode->i_size.
+	 * 只有普通文件能够使用在这个成员.
+	 */
 	loff_t synced_i_size;
+	/* 当向flash写入的时候使用的inode size */
 	loff_t ui_size;
+	/* 比如UBIFS_COMPR_FL */
 	int flags;
+	/* 最后一次read page时的page no(for bulk read) */
 	pgoff_t last_page_read;
+	/* 读取一行中的连续page个数(for bulk read) */
 	pgoff_t read_in_a_row;
+	/* 附加到inode中数据的长度 */
 	int data_len;
+	/* 文件数据 */
 	void *data;
 };
 
@@ -530,13 +557,29 @@ struct ubifs_lpt_lprops {
  * LEBs.
  */
 struct ubifs_lp_stats {
+	/* 空闲的LEB, 包含了taken_empty_lebs */
 	int empty_lebs;
+	/*
+	 * 被占用的LEB,被taken但是没有被写入.
+	 * 这个字段需要被@gc_lnum准确的计算,否则@empty_lebs可能被它自己使用,
+	 * (这种情况,变量的名字定为unused_lebs可能更加合适).
+	 *
+	 * 对于@gc_lnum来说,它在mount或者一个LEB被GC回收的时候taken.它可能不会直接写入
+	 * (当下一次commit或者unmount时候才有可能).所有要么@gc_lnum被特殊处理,要么在当前
+	 * 的时候,在taken_empty_lebs下计数.
+	 */
 	int taken_empty_lebs;
+	/* indexing LEBS的数量,可能会很大.因为在空间充足的时候不会做index合并 */
 	int idx_lebs;
+	/* 空闲空间字节数(包括所有的LEB) */
 	long long total_free;
+	/* 被弄脏空间字节数(包括所有的LEB) */
 	long long total_dirty;
+	/* 所有被使用空间的字节数(不包括index LEB) */
 	long long total_used;
+	/* dead space的字节数(不包括index LEB) */
 	long long total_dead;
+	/* dark space的字节数(不包括index LEB) */
 	long long total_dark;
 };
 
@@ -704,6 +747,7 @@ struct ubifs_wbuf {
 	unsigned int no_timer:1;
 	unsigned int need_sync:1;
 	int next_ino;
+	/* 存放在wbuf中node的ino */
 	ino_t *inodes;
 };
 
@@ -779,6 +823,7 @@ struct ubifs_znode {
 	struct ubifs_znode *cnext;
 	unsigned long flags;
 	unsigned long time;
+	/* 当前node在tree中的level */
 	int level;
 	int child_cnt;
 	int iip;
@@ -824,6 +869,7 @@ struct ubifs_node_range {
 		int len;
 		int min_len;
 	};
+	/* 如果@max_len是0,表明node长度固定为@len */
 	int max_len;
 };
 
@@ -880,16 +926,26 @@ struct ubifs_compressor {
  * @dirtied_ino_d fields are aligned.
  */
 struct ubifs_budget_req {
+	/* 非0表示budgeting应该试图尽快获取budget,不应该试图调用write-back */
 	unsigned int fast:1;
+	/* 非0表示@idx_growth,@data_growth,@dd_growth必须重新计算 */
 	unsigned int recalculate:1;
 #ifndef UBIFS_DEBUG
+	/* 当前操作增加了一个新的page */
 	unsigned int new_page:1;
+	/* 当前操作弄脏了一个page */
 	unsigned int dirtied_page:1;
+	/* 当前操作增加了一个新的目录项 */
 	unsigned int new_dent:1;
+	/* 当前操作删除或者修改了一个目录项 */
 	unsigned int mod_dent:1;
+	/* 当前操作增加了一个新的inode */
 	unsigned int new_ino:1;
+	/* inode包含了多少新创建的数据 */
 	unsigned int new_ino_d:13;
+	/* 当前操作弄脏多少个inode */
 	unsigned int dirtied_ino:4;
+	/* inode包含了多少新被弄脏的数据 */
 	unsigned int dirtied_ino_d:15;
 #else
 	/* Not bit-fields to check for overflows */
@@ -902,8 +958,11 @@ struct ubifs_budget_req {
 	unsigned int dirtied_ino;
 	unsigned int dirtied_ino_d;
 #endif
+	/* 这个index预计会增加多少 */
 	int idx_growth;
+	/* 当前操作预计会增加多少新数据 */
 	int data_growth;
+	/* 当前操作预计会增加多少将其他数据弄脏的数据 */
 	int dd_growth;
 };
 
@@ -972,16 +1031,27 @@ struct ubifs_mount_opts {
  *               mount)
  */
 struct ubifs_budg_info {
+	/* index增长的预算字节数 */
 	long long idx_growth;
+	/* 已经缓存的数据的预算字节数 */
 	long long data_growth;
+	/* 已经缓存并且会弄脏其他数据的数据的预算字节数 */
 	long long dd_growth;
+	/* index增长的预算字节数,但是这些index仍需要被考虑,因为目前为止这些index还没有被commit */
 	long long uncommitted_idx;
+	/* 在flash上的index的大小 */
 	unsigned long long old_idx_sz;
+	/* index需求的LEB最小数量 */
 	int min_idx_lebs;
+	/* 标记flash空间不足(优化使用) */
 	unsigned int nospace:1;
+	/* 同上,但是同时reserved pool是满的 */
 	unsigned int nospace_rp:1;
+	/* 写入一个内存page的data,实际上需要flash上多少字节(data节点+实际数据)(常量,mount之后不会改变) */
 	int page_budget;
+	/* 增加一个inode(inode节点)预计需要多少字节(常量,mount之后不会改变) */
 	int inode_budget;
+	/* 增加一个目录项(目录项节点+name)预计需要多少字节(常量,mount之后不会改变) */
 	int dent_budget;
 };
 
@@ -1304,15 +1374,25 @@ struct ubifs_info {
 
 	int log_lebs;
 	long long log_bytes;
+	/* log中的最后一个LEB */
 	int log_last;
+	/* LPT table使用的LEB数量 */
 	int lpt_lebs;
+	/* LPT table的第一个LEB */
 	int lpt_first;
+	/* LPT table的最后一个LEB */
 	int lpt_last;
+	/* orphan区域的LEB数量 */
 	int orph_lebs;
+	/* orphan区域的第一个LEB */
 	int orph_first;
+	/* orphan区域的最后一个LEB */
 	int orph_last;
+	/* main区域的LEB个数 */
 	int main_lebs;
+	/* main区域的第一个LEB */
 	int main_first;
+	/* main区域的字节数 */
 	long long main_bytes;
 
 	uint8_t key_hash_type;
@@ -1326,7 +1406,9 @@ struct ubifs_info {
 	int max_write_size;
 	int max_write_shift;
 	int leb_size;
+	/* LEB在PEB中的起始位置 */
 	int leb_start;
+	/* LEB的一半大小 */
 	int half_leb_size;
 	int idx_leb_size;
 	int leb_cnt;
@@ -1337,19 +1419,23 @@ struct ubifs_info {
 	unsigned int ro_error:1;
 
 	atomic_long_t dirty_pg_cnt;
+	/* dirty znode的数量 */
 	atomic_long_t dirty_zn_cnt;
 	atomic_long_t clean_zn_cnt;
 
 	spinlock_t space_lock;
 	struct ubifs_lp_stats lst;
 	struct ubifs_budg_info bi;
+	/* 用于计算新的index size的临时变量(contains accurate new index size at end of TNC commit start) */
 	unsigned long long calc_idx_sz;
 
 	int ref_node_alsz;
 	int mst_node_alsz;
 	int min_idx_node_sz;
+	/* maximum indexing node aligned on 8-bytes boundary */
 	int max_idx_node_sz;
 	long long max_inode_sz;
+	/* znode大小的字节数 */
 	int max_znode_sz;
 
 	int leb_overhead;
@@ -1357,6 +1443,7 @@ struct ubifs_info {
 	int dark_wm;
 	int block_cnt;
 
+	/* 每种类型的node具有不同的长度 */
 	struct ubifs_node_range ranges[UBIFS_NODE_TYPES_CNT];
 	struct ubi_volume_desc *ubi;
 	struct ubi_device_info di;
@@ -1373,18 +1460,29 @@ struct ubifs_info {
 	int cmt_orphans;
 	int tot_orphans;
 	int max_orphans;
+	/* orphan head LEB number */
 	int ohead_lnum;
+	/* orphan head offset */
 	int ohead_offs;
+	/* 当没有orphan时,这个成员非0 */
 	int no_orphs;
 
+	/* UBIFS background thread */
 	struct task_struct *bgt;
+	/* 后台进程名 */
 	char bgt_name[sizeof(BGT_NAME_PATTERN) + 9];
+	/* 是否需要后台进程 */
 	int need_bgt;
+	/* write buffer是否需要同步 */
 	int need_wbuf_sync;
 
+	/* 为垃圾回收而保留的LEB数量 */
 	int gc_lnum;
+	/* a buffer of LEB size used by GC and replay for scanning */
 	void *sbuf;
+	/* 已经被GC的index LEBS */
 	struct list_head idx_gc;
+	/* idx_gc链表中的成员个数 */
 	int idx_gc_cnt;
 	int gc_seq;
 	int gced_lnum;
@@ -1426,8 +1524,11 @@ struct ubifs_info {
 	struct ubifs_lpt_heap dirty_idx;
 	struct list_head uncat_list;
 	struct list_head empty_list;
+	/* 能够被释放的non-index LEBs(free + dirty == @leb_size) */
 	struct list_head freeable_list;
+	/* 能够被释放的index LEBs(free + dirty == @leb_size) */
 	struct list_head frdi_idx_list;
+	/* freeable_list中能够被释放的LEB数量,只包含空闲及dirty的空间 */
 	int freeable_cnt;
 	int in_a_category_cnt;
 
@@ -1443,7 +1544,9 @@ struct ubifs_info {
 
 	long long rp_size;
 	long long report_rp_size;
+	/* 能够使用reserved pool的uid */
 	kuid_t rp_uid;
+	/* 能够使用reserved pool的gid */
 	kgid_t rp_gid;
 
 	/* The below fields are used only during mounting and re-mounting */

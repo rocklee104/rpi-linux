@@ -1204,6 +1204,7 @@ int ubifs_lookup_level0(struct ubifs_info *c, const union ubifs_key *key,
 		return exact;
 	}
 
+	/* 剩下处理 非完全匹配 & hash key & *n == -1的情况 */
 	/*
 	 * Here is a tricky place. We have not found the key and this is a
 	 * "hashed" key, which may collide. The rest of the code deals with
@@ -1255,12 +1256,14 @@ int ubifs_lookup_level0(struct ubifs_info *c, const union ubifs_key *key,
 	}
 	if (unlikely(err < 0))
 		return err;
+	/* key值比前一个节点的key要大 */
 	if (keys_cmp(c, key, &znode->zbranch[*n].key)) {
 		dbg_tnc("found 0, lvl %d, n -1", znode->level);
 		*n = -1;
 		return 0;
 	}
 
+	/* key值 <= 前一个节点的key */
 	dbg_tnc("found 1, lvl %d, n %d", znode->level, *n);
 	*zn = znode;
 	return 1;
@@ -1443,6 +1446,7 @@ again:
 		err = found;
 		goto out;
 	}
+	/* 找到了这个znode */
 	zt = &znode->zbranch[n];
 	if (lnum) {
 		*lnum = zt->lnum;
@@ -1851,6 +1855,7 @@ int ubifs_tnc_lookup_nm(struct ubifs_info *c, const union ubifs_key *key,
 		return err;
 
 	len = le16_to_cpu(dent->nlen);
+	/* key和name都匹配 */
 	if (nm->len == len && !memcmp(dent->name, nm->name, len))
 		return 0;
 
@@ -1858,6 +1863,7 @@ int ubifs_tnc_lookup_nm(struct ubifs_info *c, const union ubifs_key *key,
 	 * Unluckily, there are hash collisions and we have to iterate over
 	 * them look at each direntry with colliding name hash sequentially.
 	 */
+	/* key匹配,但是name不匹配 */
 	return do_lookup_nm(c, key, node, nm);
 }
 

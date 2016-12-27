@@ -114,8 +114,10 @@ struct inode *ubifs_iget(struct super_block *sb, unsigned long inum)
 		return ERR_PTR(-ENOMEM);
 	if (!(inode->i_state & I_NEW))
 		return inode;
+	/* 获取ubifs_inode */
 	ui = ubifs_inode(inode);
 
+	/* 用于获取磁盘上的inode node */
 	ino = kmalloc(UBIFS_MAX_INO_NODE_SZ, GFP_NOFS);
 	if (!ino) {
 		err = -ENOMEM;

@@ -234,6 +234,21 @@ int ubifs_is_mapped(const struct ubifs_info *c, int lnum)
  * This function returns zero in case of success and %-EUCLEAN in case of bad
  * CRC or magic.
  */
+/*
+ * 当前函数检查node的magic number以及crc.当攻击者提供一个有错误nodes的fs image的时候,
+ * 验证node的长度可以防止UBIFS变得疯狂.比如说,在common header中node长度过大,在验证
+ * crc的时候,这可能会引起UBIFS读取到已经分配buffer之外的内存数据.
+ *
+ * 如果@c->no_chk_data_crc为真,这个函数可能会跳过data nodes的crc验证.no_chk_data_crc
+ * 通过mount option控制.然后,如果@must_chk_crc为真,那么@c->no_chk_data_crc的设置无效,
+ * data node仍然会进行crc验证.类似的,如果@c->mounting or @c->remounting_rw为真(挂载
+ * 或者remount的时候将文件系统挂载成RW),就会忽略@c->no_chk_data_crc的设置,还是会进行
+ * CRC校验.这是因为,在mounting或者remount期间,将文件系统从RO转变成RW,我们可能需要读取
+ * journal nodes(在replaying journal或者recovery的时候),journal nodes可能面临崩溃的
+ * 的风险,所以需要验证CRC.
+ *
+ * 当前函数执行成功后,返回0.当crc或者magic错误的时候,返回%-EUCLEAN
+ */
 int ubifs_check_node(const struct ubifs_info *c, const void *buf, int lnum,
 		     int offs, int quiet, int must_chk_crc)
 {
@@ -271,6 +286,7 @@ int ubifs_check_node(const struct ubifs_info *c, const void *buf, int lnum,
 		   node_len > c->ranges[type].max_len)
 		goto out_len;
 
+	/* 不需要验证data node的crc的时候,直接返回 */
 	if (!must_chk_crc && type == UBIFS_DATA_NODE && !c->mounting &&
 	    !c->remounting_rw && c->no_chk_data_crc)
 		return 0;
@@ -335,9 +351,11 @@ void ubifs_pad(const struct ubifs_info *c, void *buf, int pad)
 		pad_node->pad_len = cpu_to_le32(pad);
 		crc = crc32(UBIFS_CRC32_INIT, buf + 8, UBIFS_PAD_NODE_SZ - 8);
 		ch->crc = cpu_to_le32(crc);
+		/* pad node之后使用0填充 */
 		memset(buf + UBIFS_PAD_NODE_SZ, 0, pad);
 	} else if (pad > 0)
 		/* Too little space, padding node won't fit */
+		/* 需要填充的空间太小,没办法创建pad node */
 		memset(buf, UBIFS_PADDING_BYTE, pad);
 }
 
@@ -518,10 +536,13 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf)
 	 * Do not write whole write buffer but write only the minimum necessary
 	 * amount of min. I/O units.
 	 */
+	/* 将wbuf->used以c->min_io_size向上对齐 */
 	sync_len = ALIGN(wbuf->used, c->min_io_size);
+	/* wbuf->used需要以min_io_size写入,未使用的部分需要填充 */
 	dirt = sync_len - wbuf->used;
 	if (dirt)
 		ubifs_pad(c, wbuf->buf + wbuf->used, dirt);
+	/* 将wbuf已有的数据写入 */
 	err = ubifs_leb_write(c, wbuf->lnum, wbuf->buf, wbuf->offs, sync_len);
 	if (err)
 		return err;
@@ -708,6 +729,7 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 		 * The node is not very large and fits entirely within
 		 * write-buffer.
 		 */
+		/* 不能memcpy aligned_len,因为buf中没有那么多数据 */
 		memcpy(wbuf->buf + wbuf->used, buf, len);
 
 		if (aligned_len == wbuf->avail) {
@@ -730,6 +752,7 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 			spin_unlock(&wbuf->lock);
 		} else {
 			spin_lock(&wbuf->lock);
+			/* 数据memcpy了len, 统计数据还是需要aligned_len */
 			wbuf->avail -= aligned_len;
 			wbuf->used += aligned_len;
 			spin_unlock(&wbuf->lock);

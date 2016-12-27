@@ -129,6 +129,7 @@ static int create_xattr(struct ubifs_info *c, struct inode *host,
 	if (err)
 		return err;
 
+	/* 创建xattr inode */
 	inode = ubifs_new_inode(c, host, S_IFREG | S_IRWXUGO);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
@@ -141,21 +142,27 @@ static int create_xattr(struct ubifs_info *c, struct inode *host,
 	inode->i_fop = &empty_fops;
 
 	inode->i_flags |= S_SYNC | S_NOATIME | S_NOCMTIME | S_NOQUOTA;
+	/* 通过vfs inode获取ubifs_inode */
 	ui = ubifs_inode(inode);
 	ui->xattr = 1;
 	ui->flags |= UBIFS_XATTR_FL;
+	/* 这个inode的data中保存xattr的value */
 	ui->data = kmemdup(value, size, GFP_NOFS);
 	if (!ui->data) {
 		err = -ENOMEM;
 		goto out_free;
 	}
 	inode->i_size = ui->ui_size = size;
+	/* xattr的value长度 */
 	ui->data_len = size;
 
 	mutex_lock(&host_ui->ui_mutex);
 	host->i_ctime = ubifs_current_time(host);
+	/* host_ui中xattr统计计数+1, xattr inode的xattr_cnt不变*/
 	host_ui->xattr_cnt += 1;
+	/* xattr的dentry长度 */
 	host_ui->xattr_size += CALC_DENT_SIZE(nm->len);
+	/* xattr的inode长度 */
 	host_ui->xattr_size += CALC_XATTR_BYTES(size);
 	host_ui->xattr_names += nm->len;
 
@@ -216,6 +223,7 @@ static int change_xattr(struct ubifs_info *c, struct inode *host,
 	}
 	mutex_lock(&ui->ui_mutex);
 	kfree(ui->data);
+	/* 更改xattr inode中的数据 */
 	ui->data = buf;
 	inode->i_size = ui->ui_size = size;
 	ui->data_len = size;
@@ -290,12 +298,14 @@ static struct inode *iget_xattr(struct ubifs_info *c, ino_t inum)
 {
 	struct inode *inode;
 
+	/* 通过inum获取到vfs inode,这个inode已经通过ubifs inode填充 */
 	inode = ubifs_iget(c->vfs_sb, inum);
 	if (IS_ERR(inode)) {
 		ubifs_err(c, "dead extended attribute entry, error %d",
 			  (int)PTR_ERR(inode));
 		return inode;
 	}
+	/* 如果这个inode是xattr inode */
 	if (ubifs_inode(inode)->xattr)
 		return inode;
 	ubifs_err(c, "corrupt extended attribute entry");
@@ -331,19 +341,23 @@ static int setxattr(struct inode *host, const char *name, const void *value,
 	 * look-ups do not involve reading the flash.
 	 */
 	xent_key_init(c, &key, host->i_ino, &nm);
+	/* 通过key值找到xent */
 	err = ubifs_tnc_lookup_nm(c, &key, xent, &nm);
 	if (err) {
 		if (err != -ENOENT)
 			goto out_free;
 
+		/* 需要替换xent,但是没有找到需要替换的xent */
 		if (flags & XATTR_REPLACE)
 			/* We are asked not to create the xattr */
 			err = -ENODATA;
 		else
+			/* 没有xent,就创建xent */
 			err = create_xattr(c, host, &nm, value, size);
 		goto out_free;
 	}
 
+	/* 下面的代码处理替换xent */
 	if (flags & XATTR_CREATE) {
 		/* We are asked not to replace the xattr */
 		err = -EEXIST;
@@ -356,6 +370,7 @@ static int setxattr(struct inode *host, const char *name, const void *value,
 		goto out_free;
 	}
 
+	/* 替换之前xattr中的value */
 	err = change_xattr(c, host, inode, value, size);
 	iput(inode);
 
@@ -373,6 +388,7 @@ int ubifs_setxattr(struct dentry *dentry, const char *name,
 	return setxattr(d_inode(dentry), name, value, size, flags);
 }
 
+/* dentry指向目标的dentry,name指向xattr的name */
 ssize_t ubifs_getxattr(struct dentry *dentry, const char *name, void *buf,
 		       size_t size)
 {
@@ -395,6 +411,7 @@ ssize_t ubifs_getxattr(struct dentry *dentry, const char *name, void *buf,
 	if (!xent)
 		return -ENOMEM;
 
+	/* 通过key和host->i_ino及nm找到xent */
 	xent_key_init(c, &key, host->i_ino, &nm);
 	err = ubifs_tnc_lookup_nm(c, &key, xent, &nm);
 	if (err) {
@@ -403,6 +420,10 @@ ssize_t ubifs_getxattr(struct dentry *dentry, const char *name, void *buf,
 		goto out_unlock;
 	}
 
+	/*
+	 * 通过xent找到vfs inode, 再从vfs inode获取到ubifs_inode,
+	 * value保存在ubifs_inode的data中.
+	 */
 	inode = iget_xattr(c, le64_to_cpu(xent->inum));
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);

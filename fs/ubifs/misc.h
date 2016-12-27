@@ -209,6 +209,7 @@ struct ubifs_branch *ubifs_idx_branch(const struct ubifs_info *c,
 				      const struct ubifs_idx_node *idx,
 				      int bnum)
 {
+	/* 磁盘上indexing node后紧接着ubifs_branch */
 	return (struct ubifs_branch *)((void *)idx->branches +
 				       (UBIFS_BRANCH_SZ + c->key_len) * bnum);
 }

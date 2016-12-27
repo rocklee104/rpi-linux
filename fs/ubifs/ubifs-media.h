@@ -275,6 +275,7 @@ enum {
 
 /* Node sizes (N.B. these are guaranteed to be multiples of 8) */
 #define UBIFS_CH_SZ        sizeof(struct ubifs_ch)
+/* 160 */
 #define UBIFS_INO_NODE_SZ  sizeof(struct ubifs_ino_node)
 #define UBIFS_DATA_NODE_SZ sizeof(struct ubifs_data_node)
 #define UBIFS_DENT_NODE_SZ sizeof(struct ubifs_dent_node)
@@ -292,8 +293,10 @@ enum {
 #define UBIFS_BRANCH_SZ    sizeof(struct ubifs_branch)
 
 /* Maximum node sizes (N.B. these are guaranteed to be multiples of 8) */
+/* 48 + 4096 = 4144*/
 #define UBIFS_MAX_DATA_NODE_SZ  (UBIFS_DATA_NODE_SZ + UBIFS_BLOCK_SIZE)
 #define UBIFS_MAX_INO_NODE_SZ   (UBIFS_INO_NODE_SZ + UBIFS_MAX_INO_DATA)
+/* 312 */
 #define UBIFS_MAX_DENT_NODE_SZ  (UBIFS_DENT_NODE_SZ + UBIFS_MAX_NLEN + 1)
 #define UBIFS_MAX_XENT_NODE_SZ  UBIFS_MAX_DENT_NODE_SZ
 
@@ -320,6 +323,7 @@ enum {
 	UBIFS_IMMUTABLE_FL = 0x04,
 	UBIFS_APPEND_FL    = 0x08,
 	UBIFS_DIRSYNC_FL   = 0x10,
+	/* 这个inode用来保存xattr的value */
 	UBIFS_XATTR_FL     = 0x20,
 };
 
@@ -527,14 +531,21 @@ struct ubifs_ino_node {
  * Note, do not forget to amend 'zero_dent_node_unused()' function when
  * changing the padding fields.
  */
+/* 磁盘布局 | ubifs_dent_node | name | ubifs_ino_node | data | */
 struct ubifs_dent_node {
+	/* ubifs的common node,每种节点前都有common node */
 	struct ubifs_ch ch;
+	/* 由dir的ino计算得出 */
 	__u8 key[UBIFS_MAX_KEY_LEN];
+	/* 记录xattr ino */
 	__le64 inum;
 	__u8 padding1;
+	/* 文件类型 */
 	__u8 type;
+	/* name的长度 */
 	__le16 nlen;
 	__u8 padding2[4]; /* Watch 'zero_dent_node_unused()' if changing! */
+	/* 如果是xdent,那么name记录的是xattr的name,value保存在xattr inode data中 */
 	__u8 name[];
 } __packed;
 
@@ -691,6 +702,7 @@ struct ubifs_mst_node {
 	__le32 root_lnum;
 	__le32 root_offs;
 	__le32 root_len;
+	/* 为垃圾回收而保留的LEB数量,-1表示LEB没有被保留,需要在mount的时候被保留 */
 	__le32 gc_lnum;
 	__le32 ihead_lnum;
 	__le32 ihead_offs;
@@ -710,6 +722,7 @@ struct ubifs_mst_node {
 	__le32 lsave_offs;
 	__le32 lscan_lnum;
 	__le32 empty_lebs;
+	/* 逻辑块的数量 */
 	__le32 idx_lebs;
 	__le32 leb_cnt;
 	__u8 padding[344];

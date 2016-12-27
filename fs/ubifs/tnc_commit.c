@@ -780,6 +780,7 @@ int ubifs_tnc_start_commit(struct ubifs_info *c, struct ubifs_zbranch *zroot)
 	 */
 	ubifs_assert(c->bi.min_idx_lebs == ubifs_calc_min_idx_lebs(c));
 	c->bi.old_idx_sz = c->calc_idx_sz;
+	/* 计数清空 */
 	c->bi.uncommitted_idx = 0;
 	c->bi.min_idx_lebs = ubifs_calc_min_idx_lebs(c);
 	spin_unlock(&c->space_lock);
