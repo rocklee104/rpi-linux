@@ -99,6 +99,7 @@ struct ubifs_wbuf *ubifs_get_wbuf(struct ubifs_info *c, int lnum)
  * empty_log_bytes - calculate amount of empty space in the log.
  * @c: UBIFS file-system description object
  */
+/* 计算log区域空闲的空间 */
 static inline long long empty_log_bytes(const struct ubifs_info *c)
 {
 	long long h, t;
@@ -109,10 +110,13 @@ static inline long long empty_log_bytes(const struct ubifs_info *c)
 	if (h > t)
 		return c->log_bytes - h + t;
 	else if (h != t)
+		/* h < t */
 		return t - h;
 	else if (c->lhead_lnum != c->ltail_lnum)
+		/* h == t, log区域完全full */
 		return 0;
 	else
+		/* h == t, log区域完全empty */
 		return c->log_bytes;
 }
 
@@ -173,6 +177,7 @@ void ubifs_add_bud(struct ubifs_info *c, struct ubifs_bud *bud)
  * %-EAGAIN if commit is required, and a negative error codes in case of
  * failure.
  */
+/* 向log区写入一个新的bud */
 int ubifs_add_bud_to_log(struct ubifs_info *c, int jhead, int lnum, int offs)
 {
 	int err;
@@ -196,6 +201,7 @@ int ubifs_add_bud_to_log(struct ubifs_info *c, int jhead, int lnum, int offs)
 	}
 
 	/* Make sure we have enough space in the log */
+	/* log区域剩下的空间没办法容纳下一条log的最小长度 */
 	if (empty_log_bytes(c) - c->ref_node_alsz < c->min_log_bytes) {
 		dbg_log("not enough log space - %lld, required %d",
 			empty_log_bytes(c), c->min_log_bytes);
@@ -356,6 +362,12 @@ static void remove_buds(struct ubifs_info *c)
  * returns zero in case of success and a negative error code in case of
  * failure.
  */
+/*
+ * commit操作以向log区域写入一个commit start node,以及所有journal heads的ref node
+ * 开始.这些journal head将会在commit结束后定义一个journal.commit开始时,ref node
+ * 写入一个LEB,并且向最近的空闲LEB移动(因此,当commit结束后,UBIFS可以安全地unmap
+ * 之前所有的log LEB).
+ */
 int ubifs_log_start_commit(struct ubifs_info *c, int *ltail_lnum)
 {
 	void *buf;
@@ -363,10 +375,12 @@ int ubifs_log_start_commit(struct ubifs_info *c, int *ltail_lnum)
 	struct ubifs_ref_node *ref;
 	int err, i, max_len, len;
 
+	/* 确保buds的统计准确 */
 	err = dbg_check_bud_bytes(c);
 	if (err)
 		return err;
 
+	/* commit start node size + journal head个数 * ref node size */
 	max_len = UBIFS_CS_NODE_SZ + c->jhead_cnt * UBIFS_REF_NODE_SZ;
 	max_len = ALIGN(max_len, c->min_io_size);
 	buf = cs = kmalloc(max_len, GFP_NOFS);
@@ -384,6 +398,7 @@ int ubifs_log_start_commit(struct ubifs_info *c, int *ltail_lnum)
 	 * phase.
 	 */
 
+	/* 跳过cs node */
 	len = UBIFS_CS_NODE_SZ;
 	for (i = 0; i < c->jhead_cnt; i++) {
 		int lnum = c->jheads[i].wbuf.lnum;
@@ -404,16 +419,19 @@ int ubifs_log_start_commit(struct ubifs_info *c, int *ltail_lnum)
 		len += UBIFS_REF_NODE_SZ;
 	}
 
+	/* 填充buf到min_io_size */
 	ubifs_pad(c, buf + len, ALIGN(len, c->min_io_size) - len);
 
 	/* Switch to the next log LEB */
 	if (c->lhead_offs) {
+		/* journal head使用log区域的下一个LEB */
 		c->lhead_lnum = ubifs_next_log_lnum(c, c->lhead_lnum);
 		ubifs_assert(c->lhead_lnum != c->ltail_lnum);
 		c->lhead_offs = 0;
 	}
 
 	/* Must ensure next LEB has been unmapped */
+	/* 确保journal head使用的LEB是unmap */
 	err = ubifs_leb_unmap(c, c->lhead_lnum);
 	if (err)
 		goto out;
@@ -424,8 +442,10 @@ int ubifs_log_start_commit(struct ubifs_info *c, int *ltail_lnum)
 	if (err)
 		goto out;
 
+	/* 记录journal tail所在的LEB */
 	*ltail_lnum = c->lhead_lnum;
 
+	/* log区域已经写入log */
 	c->lhead_offs += len;
 	if (c->lhead_offs == c->leb_size) {
 		c->lhead_lnum = ubifs_next_log_lnum(c, c->lhead_lnum);

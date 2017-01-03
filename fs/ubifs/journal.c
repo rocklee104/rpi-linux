@@ -132,6 +132,7 @@ again:
 		goto out_unlock;
 	}
 
+	/* 当前wbuf最多可用的空间 */
 	avail = c->leb_size - wbuf->offs - wbuf->used;
 	if (wbuf->lnum != -1 && avail >= len)
 		return 0;
@@ -140,6 +141,7 @@ again:
 	 * Write buffer wasn't seek'ed or there is no enough space - look for an
 	 * LEB with some empty space.
 	 */
+	/* wbuf->lnum == -1或者avail小于len,表示wbuf空间不够,这个时候就需要找一个空闲的LEB */
 	lnum = ubifs_find_free_space(c, len, &offs, squeeze);
 	if (lnum >= 0)
 		goto out;
@@ -153,6 +155,7 @@ again:
 	 * some. But the write-buffer mutex has to be unlocked because
 	 * GC also takes it.
 	 */
+	/* 没有找到空闲的LEB,这个时候需要GC腾出空间 */
 	dbg_jnl("no free space in jhead %s, run GC", dbg_jhead(jhead));
 	mutex_unlock(&wbuf->io_mutex);
 
@@ -208,12 +211,17 @@ out:
 	 * (@wbuf->lnum). And the effect would be that the recovery would see
 	 * that there is corruption in the next-to-last bud.
 	 */
+	/*
+	 * 确保在向log添加新的bud之前同步wbuf.否则可能写入最后一个bud的reference node写入
+	 * 之后,但是在wbuf写入之前断电.在recovery的时候就会看到next-to-last bud崩溃
+	 */
 	err = ubifs_wbuf_sync_nolock(wbuf);
 	if (err)
 		goto out_return;
 	err = ubifs_add_bud_to_log(c, jhead, lnum, offs);
 	if (err)
 		goto out_return;
+	/* 将wbuf重新映射到空闲的LEB */
 	err = ubifs_wbuf_seek_nolock(wbuf, lnum, offs);
 	if (err)
 		goto out_unlock;

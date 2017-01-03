@@ -490,6 +490,9 @@ const struct ubifs_lprops *do_find_free_space(struct ubifs_info *c,
  * failed to find a LEB with @min_space bytes of free space and other a negative
  * error codes in case of failure.
  */
+/*
+ * @squeeze表示是否优先在非空的LEB中查找空间
+ */
 int ubifs_find_free_space(struct ubifs_info *c, int min_space, int *offs,
 			  int squeeze)
 {

@@ -636,6 +636,7 @@ static int init_constants_early(struct ubifs_info *c)
  * This function actually belongs to the journal, but we keep it here because
  * we want to keep it static.
  */
+/* 更新统计计数 */
 static int bud_wbuf_callback(struct ubifs_info *c, int lnum, int free, int pad)
 {
 	return ubifs_update_one_lp(c, lnum, free, pad, 0, 0);
@@ -1253,6 +1254,7 @@ static int mount_ubifs(struct ubifs_info *c)
 	sprintf(c->bgt_name, BGT_NAME_PATTERN, c->vi.ubi_num, c->vi.vol_id);
 	if (!c->ro_mount) {
 		/* Create background thread */
+		/* 当文件系统可写的时候才会创建回写线程 */
 		c->bgt = kthread_create(ubifs_bg_thread, c, "%s", c->bgt_name);
 		if (IS_ERR(c->bgt)) {
 			err = PTR_ERR(c->bgt);

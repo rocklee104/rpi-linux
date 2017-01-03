@@ -836,6 +836,11 @@ out:
  *
  * This function returns %0 upon success and a negative error code upon failure.
  */
+/*
+ * 当一个LEB只有dirty及free space,那么这个LEB就能够被安全地释放.注意,我们不能这样
+ * 处理indexing LEB,因为dirty space可能对应需要恢复的index node.这种情况下,LEB
+ * 不能unmap,直到下次commit之后.
+ */
 int ubifs_gc_start_commit(struct ubifs_info *c)
 {
 	struct ubifs_gced_idx_leb *idx_gc;
@@ -848,6 +853,10 @@ int ubifs_gc_start_commit(struct ubifs_info *c)
 	 * Unmap (non-index) freeable LEBs. Note that recovery requires that all
 	 * wbufs are sync'd before this, which is done in 'do_commit()'.
 	 */
+	/*
+	 * unmap能够释放的LEB(非index).注意在这个操作前,recovery需要所有wbuf已经同步.
+	 * 同步wbuf的操作在do_commit中执行.
+	 */
 	while (1) {
 		lp = ubifs_fast_find_freeable(c);
 		if (IS_ERR(lp)) {
@@ -858,9 +867,11 @@ int ubifs_gc_start_commit(struct ubifs_info *c)
 			break;
 		ubifs_assert(!(lp->flags & LPROPS_TAKEN));
 		ubifs_assert(!(lp->flags & LPROPS_INDEX));
+		/* unmap从freeable_list链表中取出的lprop指向的LEB */
 		err = ubifs_leb_unmap(c, lp->lnum);
 		if (err)
 			goto out;
+		/* 将lprop的可用空间,dirty空间重置 */
 		lp = ubifs_change_lp(c, lp, c->leb_size, 0, lp->flags, 0);
 		if (IS_ERR(lp)) {
 			err = PTR_ERR(lp);
@@ -871,11 +882,13 @@ int ubifs_gc_start_commit(struct ubifs_info *c)
 	}
 
 	/* Mark GC'd index LEBs OK to unmap after this commit finishes */
+	/* 将GC所有的index LEBS标记为可以unmap */
 	list_for_each_entry(idx_gc, &c->idx_gc, list)
 		idx_gc->unmap = 1;
 
 	/* Record index freeable LEBs for unmapping after commit */
 	while (1) {
+		/* 找到一个能够释放的index LEB */
 		lp = ubifs_fast_find_frdi_idx(c);
 		if (IS_ERR(lp)) {
 			err = PTR_ERR(lp);
@@ -883,6 +896,7 @@ int ubifs_gc_start_commit(struct ubifs_info *c)
 		}
 		if (!lp)
 			break;
+		/* 分配GC indexing LEB,用于记录这些能够释放的index LEB */
 		idx_gc = kmalloc(sizeof(struct ubifs_gced_idx_leb), GFP_NOFS);
 		if (!idx_gc) {
 			err = -ENOMEM;
@@ -891,6 +905,7 @@ int ubifs_gc_start_commit(struct ubifs_info *c)
 		ubifs_assert(!(lp->flags & LPROPS_TAKEN));
 		ubifs_assert(lp->flags & LPROPS_INDEX);
 		/* Don't release the LEB until after the next commit */
+		/* 没有LPROPS_INDEX的lprop添加LPROPS_INDEX,已经有LPROPS_INDEX的lprop去掉LPROPS_INDEX */
 		flags = (lp->flags | LPROPS_TAKEN) ^ LPROPS_INDEX;
 		lp = ubifs_change_lp(c, lp, c->leb_size, 0, flags, 1);
 		if (IS_ERR(lp)) {
@@ -899,9 +914,11 @@ int ubifs_gc_start_commit(struct ubifs_info *c)
 			goto out;
 		}
 		ubifs_assert(lp->flags & LPROPS_TAKEN);
+		/* lprop不能具有LPROPS_INDEX标志 */
 		ubifs_assert(!(lp->flags & LPROPS_INDEX));
 		idx_gc->lnum = lp->lnum;
 		idx_gc->unmap = 1;
+		/* 将能够释放的LEB加入c->idx_gc,下次提交后unmap */
 		list_add(&idx_gc->list, &c->idx_gc);
 	}
 out:

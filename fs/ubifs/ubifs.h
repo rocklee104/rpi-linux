@@ -209,11 +209,17 @@ enum {
  * COMMIT_BROKEN: commit failed
  */
 enum {
+	/* 不希望commit */
 	COMMIT_RESTING = 0,
+	/* 后台commit已经被请求过了 */
 	COMMIT_BACKGROUND,
+	/* 请求commit,当flash空间不够时会设置这个标志 */
 	COMMIT_REQUIRED,
+	/* 后台commit正在运行 */
 	COMMIT_RUNNING_BACKGROUND,
+	/* commit正在运行,同时被请求 */
 	COMMIT_RUNNING_REQUIRED,
+	/* commit失败 */
 	COMMIT_BROKEN,
 };
 
@@ -339,7 +345,12 @@ struct ubifs_scan_leb {
  * LEBs - they are not released immediately, but only after the next commit.
  * This is needed to guarantee recoverability.
  */
+/*
+ * GC indexing LEB.这个数据结构用于临时保存GC indexing LEB.
+ * 这些indexing LEB不会立即释放,只有在下次的commit之后才会释放.
+ */
 struct ubifs_gced_idx_leb {
+	/* 链表成员,链表头是c->idx_gc,用于收集被GC的LEB */
 	struct list_head list;
 	int lnum;
 	int unmap;
@@ -492,7 +503,9 @@ enum {
 	LPROPS_FREEABLE  =  5,
 	LPROPS_FRDI_IDX  =  6,
 	LPROPS_CAT_MASK  = 15,
+	/* lprops被占用 */
 	LPROPS_TAKEN     = 16,
+	/* LEB包含了indexing node */
 	LPROPS_INDEX     = 32,
 };
 
@@ -505,13 +518,18 @@ enum {
  * @list: list of same-category lprops (for LPROPS_EMPTY and LPROPS_FREEABLE)
  * @hpos: heap position in heap of same-category lprops (other categories)
  */
+/* 逻辑块属性 */
 struct ubifs_lprops {
+	/* free space的字节数 */
 	int free;
+	/* dirty space的字节数 */
 	int dirty;
 	int flags;
 	int lnum;
 	union {
+		/* 相同分类的lprop(LPROPS_EMPTY及LPROPS_FREEABLE) */
 		struct list_head list;
+		/* 相同分类lprop heap的地址 */
 		int hpos;
 	};
 };
@@ -556,6 +574,7 @@ struct ubifs_lpt_lprops {
  * @total_used, @total_dead and @total_dark fields do not account indexing
  * LEBs.
  */
+/* main区域的统计计数 */
 struct ubifs_lp_stats {
 	/* 空闲的LEB, 包含了taken_empty_lebs */
 	int empty_lebs;
@@ -739,6 +758,7 @@ struct ubifs_wbuf {
 	int size;
 	int jhead;
 	int (*sync_callback)(struct ubifs_info *c, int lnum, int free, int pad);
+	/* 保护wbuf的mutex */
 	struct mutex io_mutex;
 	spinlock_t lock;
 	ktime_t softlimit;
@@ -762,7 +782,9 @@ struct ubifs_wbuf {
 struct ubifs_bud {
 	int lnum;
 	int start;
+	/* 当前bud属于的journal head number */
 	int jhead;
+	/* 链表成员,用于链接到ubifs_jhead */
 	struct list_head list;
 	struct rb_node rb;
 };
@@ -777,7 +799,9 @@ struct ubifs_bud {
  */
 struct ubifs_jhead {
 	struct ubifs_wbuf wbuf;
+	/* 链表头,连接ubifs_bud */
 	struct list_head buds_list;
+	/* 非0表示当写入journal head的时候,nodes被group起来提交 */
 	unsigned int grouped:1;
 };
 
@@ -791,12 +815,16 @@ struct ubifs_jhead {
  */
 struct ubifs_zbranch {
 	union ubifs_key key;
+	/* 节点可能是znode,也可能是leaf node */
 	union {
 		struct ubifs_znode *znode;
 		void *leaf;
 	};
+	/* target node的LEB no(可能是indexing node也可能是data node) */
 	int lnum;
+	/* LEB中的偏移 */
 	int offs;
+	/* node长度 */
 	int len;
 };
 
@@ -820,17 +848,27 @@ struct ubifs_zbranch {
  */
 struct ubifs_znode {
 	struct ubifs_znode *parent;
+	/* 下一个需要提交的znode */
 	struct ubifs_znode *cnext;
+	/* %DIRTY_ZNODE, %COW_ZNODE or %OBSOLETE_ZNODE */
 	unsigned long flags;
+	/* 最后访问时间 */
 	unsigned long time;
-	/* 当前node在tree中的level */
+	/* 当前entry在TNC tree中的level,叶子节点的level是0 */
 	int level;
+	/* 有多少个子节点 */
 	int child_cnt;
+	/* 在其父节点zbranch array的index */
 	int iip;
+	/* key值下界已经改变,即child插入slot 0 */
 	int alt;
+	/* 对应的index node的LEB no */
 	int lnum;
+	/* 对应的index node的offset */
 	int offs;
+	/* 对应的index node的长度 */
 	int len;
+	/* znode branches的数组,成员个数一般是child_cnt */
 	struct ubifs_zbranch zbranch[];
 };
 
@@ -978,15 +1016,24 @@ struct ubifs_budget_req {
  * @cmt: %1 => commit pending, otherwise %0
  * @del: %1 => delete pending, otherwise %0
  */
+/* 保存orphan的ino */
 struct ubifs_orphan {
+	/* rb-tree的节点,通过ino排序的 */
 	struct rb_node rb;
+	/* 链表头,用于增加orphan */
 	struct list_head list;
+	/* 链表头,用于链接自上次提交以来增加的orphan */
 	struct list_head new_list;
+	/* 下一个需要提交的orphan */
 	struct ubifs_orphan *cnext;
+	/* 下一个需要删除的orphan */
 	struct ubifs_orphan *dnext;
 	ino_t inum;
+	/* 标记自上次提交以来添加了orphan */
 	unsigned new:1;
+	/* commit pending */
 	unsigned cmt:1;
+	/* delete pending */
 	unsigned del:1;
 };
 
@@ -1311,16 +1358,21 @@ struct ubifs_info {
 
 	ino_t highest_inum;
 	unsigned long long max_sqnum;
+	/* 最后一次成功提交的commit number */
 	unsigned long long cmt_no;
 	spinlock_t cnt_lock;
 	int fmt_version;
 	int ro_compat_version;
 	unsigned char uuid[16];
 
+	/* log head所在LEB no */
 	int lhead_lnum;
+	/* log head在LEB中的offs */
 	int lhead_offs;
+	/* log tail所在的LEB no, offs为0 */
 	int ltail_lnum;
 	struct mutex log_mutex;
+	/* log需要最小的字节数,一般是一个LEB大小 */
 	int min_log_bytes;
 	long long cmt_bud_bytes;
 
@@ -1328,6 +1380,7 @@ struct ubifs_info {
 	long long bud_bytes;
 	spinlock_t buds_lock;
 	int jhead_cnt;
+	/* journal head数组(head zero is base head),个数由jhead_cnt决定 */
 	struct ubifs_jhead *jheads;
 	long long max_bud_bytes;
 	long long bg_bud_bytes;
@@ -1373,6 +1426,7 @@ struct ubifs_info {
 	void *write_reserve_buf;
 
 	int log_lebs;
+	/* log的大小 */
 	long long log_bytes;
 	/* log中的最后一个LEB */
 	int log_last;
@@ -1423,12 +1477,15 @@ struct ubifs_info {
 	atomic_long_t dirty_zn_cnt;
 	atomic_long_t clean_zn_cnt;
 
+	/* protects @bi and @lst */
 	spinlock_t space_lock;
+	/* lprop的统计计数 */
 	struct ubifs_lp_stats lst;
 	struct ubifs_budg_info bi;
 	/* 用于计算新的index size的临时变量(contains accurate new index size at end of TNC commit start) */
 	unsigned long long calc_idx_sz;
 
+	/* ref node以最小I/O unit对齐的大小 */
 	int ref_node_alsz;
 	int mst_node_alsz;
 	int min_idx_node_sz;
@@ -1471,7 +1528,7 @@ struct ubifs_info {
 	struct task_struct *bgt;
 	/* 后台进程名 */
 	char bgt_name[sizeof(BGT_NAME_PATTERN) + 9];
-	/* 是否需要后台进程 */
+	/* 是否需要执行后台回写线程 */
 	int need_bgt;
 	/* write buffer是否需要同步 */
 	int need_wbuf_sync;
@@ -1506,23 +1563,41 @@ struct ubifs_info {
 	int lpt_hght;
 	int pnodes_have;
 
+	/* protects lprops table and all the other lprops-related fields */
 	struct mutex lp_mutex;
+	/* LPT root nnode的LEB no */
 	int lpt_lnum;
+	/* LPT root nnode的偏移 */
 	int lpt_offs;
+	/* LPT head的LEB number */
 	int nhead_lnum;
+	/* LPT head的偏移 */
 	int nhead_offs;
+	/* dirty flags for LPT special nodes e.g. ltab */
 	int lpt_drty_flgs;
+	/* dirty nnode的数量 */
 	int dirty_nn_cnt;
+	/* dirty pnode的数量 */
 	int dirty_pn_cnt;
+	/* flag that indicates LPT GC may be needed */
 	int check_lpt_free;
+	/* LPT大小 */
 	long long lpt_sz;
+	/* buffer for an on-flash nnode or pnode */
 	void *lpt_nod_buf;
+	/* buffer of LEB size used by LPT */
 	void *lpt_buf;
+	/* 内存中LPT nnode的地址 */
 	struct ubifs_nnode *nroot;
+	/* 下一个需要commit的LPT node */
 	struct ubifs_cnode *lpt_cnext;
+	/* array of heaps of categorized lprops */
 	struct ubifs_lpt_heap lpt_heap[LPROPS_HEAP_CNT];
+	/* a (reverse sorted) copy of the LPROPS_DIRTY_IDX heap as at previous commit start */
 	struct ubifs_lpt_heap dirty_idx;
+	/* un-categorized LEBs链表 */
 	struct list_head uncat_list;
+	/* empty LEB链表 */
 	struct list_head empty_list;
 	/* 能够被释放的non-index LEBs(free + dirty == @leb_size) */
 	struct list_head freeable_list;
@@ -1530,16 +1605,26 @@ struct ubifs_info {
 	struct list_head frdi_idx_list;
 	/* freeable_list中能够被释放的LEB数量,只包含空闲及dirty的空间 */
 	int freeable_cnt;
+	/* count of lprops which are in a certain category, which basically meants that they were loaded from the flash */
 	int in_a_category_cnt;
 
+	/* LPT自己的lprops table的LEB no */
 	int ltab_lnum;
+	/* LPT自己的lprops table的offset */
 	int ltab_offs;
+	/* LPT自己的lprops table */
 	struct ubifs_lpt_lprops *ltab;
+	/* LPT自己的lprops table(commit copy) */
 	struct ubifs_lpt_lprops *ltab_cmt;
+	/* LPT save talbe的LEB数量 */
 	int lsave_cnt;
+	/* LPT save talbe的LEB no */
 	int lsave_lnum;
+	/* LPT save talbe的offset */
 	int lsave_offs;
+	/* LPT's save table */
 	int *lsave;
+	/* LEB number of last LPT scan */
 	int lscan_lnum;
 
 	long long rp_size;

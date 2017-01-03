@@ -67,6 +67,7 @@ static inline int ubifs_zn_cow(const struct ubifs_znode *znode)
  */
 static inline void ubifs_wake_up_bgt(struct ubifs_info *c)
 {
+	/* 如果need_bgt == 1的话就不执行, */
 	if (c->bgt && !c->need_bgt) {
 		c->need_bgt = 1;
 		wake_up_process(c->bgt);

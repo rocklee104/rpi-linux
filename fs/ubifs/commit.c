@@ -65,6 +65,7 @@
  *
  * This function returns %1 if there is nothing to commit and %0 otherwise.
  */
+/* 返回1表示没有什么要提交,0则表示有数据需要提交 */
 static int nothing_to_commit(struct ubifs_info *c)
 {
 	/*
@@ -241,12 +242,17 @@ out:
  * This function runs background commit if it is needed. Returns zero in case
  * of success and a negative error code in case of failure.
  */
+/* 执行后台commit */
 static int run_bg_commit(struct ubifs_info *c)
 {
 	spin_lock(&c->cs_lock);
 	/*
 	 * Run background commit only if background commit was requested or if
 	 * commit is required.
+	 */
+	/*
+	 * ubifs_commit_required设置COMMIT_REQUIRED.
+	 * ubifs_request_bg_commit设置COMMIT_BACKGROUND
 	 */
 	if (c->cmt_state != COMMIT_BACKGROUND &&
 	    c->cmt_state != COMMIT_REQUIRED)
@@ -255,6 +261,7 @@ static int run_bg_commit(struct ubifs_info *c)
 
 	down_write(&c->commit_sem);
 	spin_lock(&c->cs_lock);
+	/* cmt_state添加RUNNING的状态 */
 	if (c->cmt_state == COMMIT_REQUIRED)
 		c->cmt_state = COMMIT_RUNNING_REQUIRED;
 	else if (c->cmt_state == COMMIT_BACKGROUND)
@@ -284,6 +291,11 @@ out:
  * Note, other stuff like background garbage collection may be added here in
  * future.
  */
+/*
+ * 1.当write-buffer超时,这个线程同步恰当的wbuf.
+ * 2.当journal差不多满了的时候,线程会提前开始提交.
+ * 3.GC目前还没有在这个线程中实现.
+ */
 int ubifs_bg_thread(void *info)
 {
 	int err;
@@ -303,6 +315,7 @@ int ubifs_bg_thread(void *info)
 		set_current_state(TASK_INTERRUPTIBLE);
 		/* Check if there is something to do */
 		if (!c->need_bgt) {
+			/* 防止无谓的触发 */
 			/*
 			 * Nothing prevents us from going sleep now and
 			 * be never woken up and block the task which
@@ -335,6 +348,7 @@ int ubifs_bg_thread(void *info)
  * This function is called if a commit is required but cannot be done from the
  * calling function, so it is just flagged instead.
  */
+/* 设置标志,请求commit.后台进程会根据标志进行提交 */
 void ubifs_commit_required(struct ubifs_info *c)
 {
 	spin_lock(&c->cs_lock);
@@ -365,6 +379,7 @@ void ubifs_commit_required(struct ubifs_info *c)
  * This function is called if the journal is full enough to make a commit
  * worthwhile, so background thread is kicked to start it.
  */
+/* 当journal满了的时候,通知后台线程执行commit */
 void ubifs_request_bg_commit(struct ubifs_info *c)
 {
 	spin_lock(&c->cs_lock);
@@ -373,6 +388,7 @@ void ubifs_request_bg_commit(struct ubifs_info *c)
 			dbg_cstate(COMMIT_BACKGROUND));
 		c->cmt_state = COMMIT_BACKGROUND;
 		spin_unlock(&c->cs_lock);
+		/* 不单单只是设置commit标志,而且主动唤醒后台线程 */
 		ubifs_wake_up_bgt(c);
 	} else
 		spin_unlock(&c->cs_lock);

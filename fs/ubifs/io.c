@@ -155,6 +155,7 @@ int ubifs_leb_change(struct ubifs_info *c, int lnum, const void *buf, int len)
 	return err;
 }
 
+/* 一般来说可以将lnum清空 */
 int ubifs_leb_unmap(struct ubifs_info *c, int lnum)
 {
 	int err;
@@ -453,6 +454,7 @@ void ubifs_prep_grp_node(struct ubifs_info *c, void *node, int len, int last)
  *
  * This function is called when the write-buffer timer expires.
  */
+/* wbuf超时之后调用的处理函数 */
 static enum hrtimer_restart wbuf_timer_callback_nolock(struct hrtimer *timer)
 {
 	struct ubifs_wbuf *wbuf = container_of(timer, struct ubifs_wbuf, timer);
@@ -626,8 +628,10 @@ int ubifs_bg_wbufs_sync(struct ubifs_info *c)
 	int err, i;
 
 	ubifs_assert(!c->ro_media && !c->ro_mount);
+	/* 不需要同步wbuf就直接返回 */
 	if (!c->need_wbuf_sync)
 		return 0;
+	/* 清除需要同步的标志 */
 	c->need_wbuf_sync = 0;
 
 	if (c->ro_error) {
@@ -649,6 +653,7 @@ int ubifs_bg_wbufs_sync(struct ubifs_info *c)
 			continue;
 
 		mutex_lock_nested(&wbuf->io_mutex, wbuf->jhead);
+		/* wbuf不需要同步的话,就释放mutex */
 		if (!wbuf->need_sync) {
 			mutex_unlock(&wbuf->io_mutex);
 			continue;
@@ -657,6 +662,7 @@ int ubifs_bg_wbufs_sync(struct ubifs_info *c)
 		err = ubifs_wbuf_sync_nolock(wbuf);
 		mutex_unlock(&wbuf->io_mutex);
 		if (err) {
+			/* 如果写入wbuf失败,就cancel掉所有的定时器,防止错误一直出现 */
 			ubifs_err(c, "cannot sync write-buffer, error %d", err);
 			ubifs_ro_mode(c, err);
 			goto out_timers;

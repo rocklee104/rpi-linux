@@ -531,6 +531,7 @@ static int is_lprops_dirty(struct ubifs_info *c, struct ubifs_lprops *lprops)
  * consequently the pointer returned may not be the same as the pointer
  * passed.
  */
+/* 改变LEB的属性 */
 const struct ubifs_lprops *ubifs_change_lp(struct ubifs_info *c,
 					   const struct ubifs_lprops *lp,
 					   int free, int dirty, int flags,
@@ -812,6 +813,7 @@ const struct ubifs_lprops *ubifs_fast_find_empty(struct ubifs_info *c)
  * This function returns LEB properties for a freeable LEB or %NULL if the
  * function is unable to find a freeable LEB quickly.
  */
+/* 尝试快速找到一个能够释放的LEB */
 const struct ubifs_lprops *ubifs_fast_find_freeable(struct ubifs_info *c)
 {
 	struct ubifs_lprops *lprops;
@@ -821,7 +823,9 @@ const struct ubifs_lprops *ubifs_fast_find_freeable(struct ubifs_info *c)
 	if (list_empty(&c->freeable_list))
 		return NULL;
 
+	/* 取出freeable_list上的第一个成员 */
 	lprops = list_entry(c->freeable_list.next, struct ubifs_lprops, list);
+	/* 不能有LPROPS_TAKEN及LPROPS_INDEX标识 */
 	ubifs_assert(!(lprops->flags & LPROPS_TAKEN));
 	ubifs_assert(!(lprops->flags & LPROPS_INDEX));
 	ubifs_assert(lprops->free + lprops->dirty == c->leb_size);
@@ -836,6 +840,7 @@ const struct ubifs_lprops *ubifs_fast_find_freeable(struct ubifs_info *c)
  * This function returns LEB properties for a freeable index LEB or %NULL if the
  * function is unable to find a freeable index LEB quickly.
  */
+/* 尝试快速找到一个能够释放的index LEB */
 const struct ubifs_lprops *ubifs_fast_find_frdi_idx(struct ubifs_info *c)
 {
 	struct ubifs_lprops *lprops;
@@ -847,6 +852,7 @@ const struct ubifs_lprops *ubifs_fast_find_frdi_idx(struct ubifs_info *c)
 
 	lprops = list_entry(c->frdi_idx_list.next, struct ubifs_lprops, list);
 	ubifs_assert(!(lprops->flags & LPROPS_TAKEN));
+	/* 保证lprops具有LPROPS_INDEX标志 */
 	ubifs_assert((lprops->flags & LPROPS_INDEX));
 	ubifs_assert(lprops->free + lprops->dirty == c->leb_size);
 	return lprops;
