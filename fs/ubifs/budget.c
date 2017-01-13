@@ -175,6 +175,7 @@ static int make_free_space(struct ubifs_info *c)
  * This function calculates and returns the number of LEBs which should be kept
  * for index usage.
  */
+/* 计算并且返回需要为index保留的LEB数量 */
 int ubifs_calc_min_idx_lebs(struct ubifs_info *c)
 {
 	int idx_lebs;

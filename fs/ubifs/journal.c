@@ -548,6 +548,12 @@ static void mark_inode_clean(struct ubifs_info *c, struct ubifs_inode *ui)
  * This function marks the @dir and @inode inodes as clean and returns zero on
  * success. In case of failure, a negative error code is returned.
  */
+/*
+ * dir: 父inode,或者是extend inode的host inode.
+ *
+ * 当前函数更新inode, 将会写入一个目录项(或者xentry),inode自身以及parent的inode
+ * (或者xattr host inode)到journal.
+ */
 int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 		     const struct qstr *nm, const struct inode *inode,
 		     int deletion, int xent)
@@ -576,6 +582,7 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 	 */
 	if (!last_reference) {
 		ilen += ui->data_len;
+		/* dir或者inode需要同步都会执行并步 */
 		sync |= IS_SYNC(inode);
 	}
 
@@ -606,6 +613,7 @@ int ubifs_jnl_update(struct ubifs_info *c, const struct inode *dir,
 	}
 
 	key_write(c, &dent_key, dent->key);
+	/* 被删除的文件dent->ino == 0 */
 	dent->inum = deletion ? 0 : cpu_to_le64(inode->i_ino);
 	dent->type = get_dent_type(inode->i_mode);
 	dent->nlen = cpu_to_le16(nm->len);
@@ -830,6 +838,7 @@ int ubifs_jnl_write_inode(struct ubifs_info *c, const struct inode *inode)
 	if (err)
 		goto out_free;
 
+	/* 通过vfs inode填充ubifs_ino_node */
 	pack_inode(c, ino, inode, 1);
 	err = write_head(c, BASEHD, ino, len, &lnum, &offs, sync);
 	if (err)

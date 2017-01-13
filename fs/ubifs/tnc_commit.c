@@ -34,6 +34,7 @@
  * @offs: offset where new index node will be written
  * @len: length of new index node
  */
+/* 通过znode为fill-the-gaps method TNC提交构建index node */
 static int make_idx_node(struct ubifs_info *c, struct ubifs_idx_node *idx,
 			 struct ubifs_znode *znode, int lnum, int offs, int len)
 {
@@ -45,6 +46,7 @@ static int make_idx_node(struct ubifs_info *c, struct ubifs_idx_node *idx,
 	idx->child_cnt = cpu_to_le16(znode->child_cnt);
 	idx->level = cpu_to_le16(znode->level);
 	for (i = 0; i < znode->child_cnt; i++) {
+		/* 构建每一个ubifs_branch */
 		struct ubifs_branch *br = ubifs_idx_branch(c, idx, i);
 		struct ubifs_zbranch *zbr = &znode->zbranch[i];
 
@@ -65,6 +67,7 @@ static int make_idx_node(struct ubifs_info *c, struct ubifs_idx_node *idx,
 	znode->offs = offs;
 	znode->len = len;
 
+	/* 通过znode将LEB加入old index rb-tree */
 	err = insert_old_idx_znode(c, znode);
 
 	/* Update the parent */
@@ -72,6 +75,7 @@ static int make_idx_node(struct ubifs_info *c, struct ubifs_idx_node *idx,
 	if (zp) {
 		struct ubifs_zbranch *zbr;
 
+		/* 通过znode更新zbr */
 		zbr = &zp->zbranch[znode->iip];
 		zbr->lnum = lnum;
 		zbr->offs = offs;
@@ -92,6 +96,7 @@ static int make_idx_node(struct ubifs_info *c, struct ubifs_idx_node *idx,
 	 * Note, unlike 'write_index()' we do not add memory barriers here
 	 * because this function is called with @c->tnc_mutex locked.
 	 */
+	/* 准备回写,清除DIRTY_ZNODE及COW_ZNODE */
 	__clear_bit(DIRTY_ZNODE, &znode->flags);
 	__clear_bit(COW_ZNODE, &znode->flags);
 
@@ -117,6 +122,7 @@ static int fill_gap(struct ubifs_info *c, int lnum, int gap_start, int gap_end,
 	ubifs_assert((gap_end & 7) == 0);
 	ubifs_assert(gap_end >= gap_start);
 
+	/* gap的剩余空间 */
 	gap_remains = gap_end - gap_start;
 	if (!gap_remains)
 		return 0;
@@ -136,7 +142,9 @@ static int fill_gap(struct ubifs_info *c, int lnum, int gap_start, int gap_end,
 				return err;
 			gap_remains -= alen;
 			gap_pos += alen;
+			/* 取链表中的下一个znode */
 			c->enext = znode->cnext;
+			/* 没有可以提交的znode */
 			if (c->enext == c->cnext)
 				c->enext = NULL;
 			written += 1;
@@ -226,6 +234,7 @@ static int is_idx_node_in_use(struct ubifs_info *c, union ubifs_key *key,
  * This function returns the number of index nodes written into the gaps, or a
  * negative error code on failure.
  */
+/* 返回写入gaps的index node个数 */
 static int layout_leb_in_gaps(struct ubifs_info *c, int *p)
 {
 	struct ubifs_scan_leb *sleb;
@@ -336,6 +345,9 @@ static int layout_leb_in_gaps(struct ubifs_info *c, int *p)
  * to the current index head.  The number is not exact and may be more than
  * needed.
  */
+/*
+ * 还需要分配多少个LEB用来保存@cnt个indexing node
+ */
 static int get_leb_cnt(struct ubifs_info *c, int cnt)
 {
 	int d;
@@ -344,6 +356,7 @@ static int get_leb_cnt(struct ubifs_info *c, int cnt)
 	cnt -= (c->leb_size - c->ihead_offs) / c->max_idx_node_sz;
 	if (cnt < 0)
 		cnt = 0;
+	/* 一个LEB能够存放的index node的数量 */
 	d = c->leb_size / c->max_idx_node_sz;
 	return DIV_ROUND_UP(cnt, d);
 }
@@ -358,6 +371,7 @@ static int get_leb_cnt(struct ubifs_info *c, int cnt)
  *
  * This function returns %0 on success and a negative error code on failure.
  */
+/* 使用in-the-gaps策略提交TNC */
 static int layout_in_gaps(struct ubifs_info *c, int cnt)
 {
 	int err, leb_needed_cnt, written, *p;
@@ -424,11 +438,13 @@ static int layout_in_empty_space(struct ubifs_info *c)
 	buf_offs = c->ihead_offs;
 
 	buf_len = ubifs_idx_node_sz(c, c->fanout);
+	/* buf以c->min_io_size对齐 */
 	buf_len = ALIGN(buf_len, c->min_io_size);
 	used = 0;
 	avail = buf_len;
 
 	/* Ensure there is enough room for first write */
+	/* 确保第一次写入有足够的空间 */
 	next_len = ubifs_idx_node_sz(c, cnext->child_cnt);
 	if (buf_offs + next_len > c->leb_size)
 		lnum = -1;
@@ -459,6 +475,7 @@ static int layout_in_empty_space(struct ubifs_info *c)
 		/* Update the parent */
 		zp = znode->parent;
 		if (zp) {
+			/* 更新parent->zbranch对当前znode的记录 */
 			struct ubifs_zbranch *zbr;
 			int i;
 
@@ -486,8 +503,10 @@ static int layout_in_empty_space(struct ubifs_info *c)
 		 */
 		cnext = znode->cnext;
 		if (cnext == c->cnext)
+			/* 没有要提交的index node了 */
 			next_len = 0;
 		else
+			/* 计算下个index node需要写入的字节数 */
 			next_len = ubifs_idx_node_sz(c, cnext->child_cnt);
 
 		/* Update buffer positions */
@@ -500,6 +519,7 @@ static int layout_in_empty_space(struct ubifs_info *c)
 		    avail > 0)
 			continue;
 
+		/* 如果next_len == 0或者buf_offs + used + next_len > c->leb_size或者avail <= 0 */
 		if (avail <= 0 && next_len &&
 		    buf_offs + used + next_len <= c->leb_size)
 			blen = buf_len;
@@ -549,11 +569,18 @@ static int layout_in_empty_space(struct ubifs_info *c)
  * the end of the last commit.  To write "in-the-gaps" requires that those index
  * LEBs are updated atomically in-place.
  */
+/*
+ * 计算及更新提交index nodes的位置.如果没有足够的空闲LEB用来分配,那么inodex node
+ * 就会被放置到由过时index nodes创建出来的gaps中(非空闲的index LEB).为了实现这种
+ * 目的,过时的index node在最后一次提交结束时不在索引的index node.为了写入in-the-gaps,
+ * 需要这些index LEB就地更新.
+ */
 static int layout_commit(struct ubifs_info *c, int no_space, int cnt)
 {
 	int err;
 
 	if (no_space) {
+		/* 无法分配空闲的LEB,需要int_the_graps */
 		err = layout_in_gaps(c, cnt);
 		if (err)
 			return err;
@@ -566,6 +593,7 @@ static int layout_commit(struct ubifs_info *c, int no_space, int cnt)
  * find_first_dirty - find first dirty znode.
  * @znode: znode to begin searching from
  */
+/* 找到第一个dirty的znode */
 static struct ubifs_znode *find_first_dirty(struct ubifs_znode *znode)
 {
 	int i, cont;
@@ -590,6 +618,7 @@ static struct ubifs_znode *find_first_dirty(struct ubifs_znode *znode)
 			}
 		}
 		if (!cont) {
+			/* 如果其子节点都是clean的 */
 			if (ubifs_zn_dirty(znode))
 				return znode;
 			return NULL;
@@ -605,12 +634,14 @@ static struct ubifs_znode *find_next_dirty(struct ubifs_znode *znode)
 {
 	int n = znode->iip + 1;
 
+	/* 当前znode是脏的,只能向其parent追溯 */
 	znode = znode->parent;
 	if (!znode)
 		return NULL;
 	for (; n < znode->child_cnt; n++) {
 		struct ubifs_zbranch *zbr = &znode->zbranch[n];
 
+		/* 如果znode dirty,调用find_first_dirty找到其第一个dirty的子节点 */
 		if (zbr->znode && ubifs_zn_dirty(zbr->znode))
 			return find_first_dirty(zbr->znode);
 	}
@@ -623,6 +654,7 @@ static struct ubifs_znode *find_next_dirty(struct ubifs_znode *znode)
  *
  * This function returns the number of znodes to commit.
  */
+/* 创建需要提交的dirty znodes的链表,返回需要提交的znode的个数 */
 static int get_znodes_to_commit(struct ubifs_info *c)
 {
 	struct ubifs_znode *znode, *cnext;
@@ -641,6 +673,7 @@ static int get_znodes_to_commit(struct ubifs_info *c)
 		znode->alt = 0;
 		cnext = find_next_dirty(znode);
 		if (!cnext) {
+			/* 没有dirty的节点了,链表闭环 */
 			znode->cnext = c->cnext;
 			break;
 		}
@@ -676,6 +709,7 @@ static int alloc_idx_lebs(struct ubifs_info *c, int cnt)
 	if (!c->ilebs)
 		return -ENOMEM;
 	for (i = 0; i < leb_cnt; i++) {
+		/* 为index node查找可用的LEB */
 		lnum = ubifs_find_free_leb_for_idx(c);
 		if (lnum < 0)
 			return lnum;
@@ -696,6 +730,7 @@ static int alloc_idx_lebs(struct ubifs_info *c, int cnt)
  *
  * This function returns %0 on success and a negative error code on failure.
  */
+/* 很有可能我们分配了过多的empty LEB.这个函数释放这些多多余的LEB */
 static int free_unused_idx_lebs(struct ubifs_info *c)
 {
 	int i, err = 0, lnum, er;
@@ -737,6 +772,7 @@ static int free_idx_lebs(struct ubifs_info *c)
  * in-gap commit method. Returns zero in case of success and a negative error
  * code in case of failure.
  */
+/* 提交TNC,如果没有足够空间,就使用in-gap commit */
 int ubifs_tnc_start_commit(struct ubifs_info *c, struct ubifs_zbranch *zroot)
 {
 	int err = 0, cnt;
@@ -747,10 +783,13 @@ int ubifs_tnc_start_commit(struct ubifs_info *c, struct ubifs_zbranch *zroot)
 		goto out;
 	cnt = get_znodes_to_commit(c);
 	if (cnt != 0) {
+		/* 有需要提交的znode */
 		int no_space = 0;
 
+		/* 给cnt个index分配空闲的LEB */
 		err = alloc_idx_lebs(c, cnt);
 		if (err == -ENOSPC)
+			/* 无法分配空闲的LEB */
 			no_space = 1;
 		else if (err)
 			goto out_free;
@@ -758,10 +797,12 @@ int ubifs_tnc_start_commit(struct ubifs_info *c, struct ubifs_zbranch *zroot)
 		if (err)
 			goto out_free;
 		ubifs_assert(atomic_long_read(&c->dirty_zn_cnt) == 0);
+		/* 释放多余的LEB */
 		err = free_unused_idx_lebs(c);
 		if (err)
 			goto out;
 	}
+	/* 提交完成,销毁old_idx红黑树 */
 	destroy_old_idx(c);
 	memcpy(zroot, &c->zroot, sizeof(struct ubifs_zbranch));
 
@@ -777,6 +818,12 @@ int ubifs_tnc_start_commit(struct ubifs_info *c, struct ubifs_zbranch *zroot)
 	 * space which is needed to commit the index, and it is save for the
 	 * budgeting subsystem to assume the index is already committed,
 	 * even though it is not.
+	 */
+	/*
+	 * 虽然我们还没有完成提交,但是我们在这里更新已经提交的index('c->bi.old_idx_sz')
+	 * 以及清除index growth budget.现在做这部分工作没有问题,因为我们已经保留
+	 * 了所有的需要提交的index空间,这部分空间为budgeting subsystem使用,假设index
+	 * 已经被提交,即使还没提交.
 	 */
 	ubifs_assert(c->bi.min_idx_lebs == ubifs_calc_min_idx_lebs(c));
 	c->bi.old_idx_sz = c->calc_idx_sz;

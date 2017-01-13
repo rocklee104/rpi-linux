@@ -74,6 +74,12 @@ enum {
  * That is what this function does. The RB-tree is ordered by LEB number and
  * offset because they uniquely identify the old index node.
  */
+/*
+ * index node被cow后,需要将这个index node加入一个rb-tree,等待提交.
+ *
+ * 为了恢复,在flash上必须要有一个index的完整版本.这是自上次成功提交以来的index.
+ * 实际上就是cow之前的原始index
+ */
 static int insert_old_idx(struct ubifs_info *c, int lnum, int offs)
 {
 	struct ubifs_old_idx *old_idx, *o;
@@ -115,12 +121,15 @@ static int insert_old_idx(struct ubifs_info *c, int lnum, int offs)
  *
  * Returns %0 on success, and a negative error code on failure.
  */
+/* 通过znode将LEB加入old index rb-tree */
 int insert_old_idx_znode(struct ubifs_info *c, struct ubifs_znode *znode)
 {
 	if (znode->parent) {
 		struct ubifs_zbranch *zbr;
 
+		/* 获取znode的zbr */
 		zbr = &znode->parent->zbranch[znode->iip];
+		/* 通过zbr将LEB加入old index rb-tree */
 		if (zbr->len)
 			return insert_old_idx(c, zbr->lnum, zbr->offs);
 	} else
@@ -176,6 +185,12 @@ static int ins_clr_old_idx_znode(struct ubifs_info *c,
  * new index is successfully written.  The old-idx RB-tree is used for the
  * in-the-gaps method of writing index nodes and is destroyed every commit.
  */
+/*
+ * 在开始提交期间,old_idx红黑树用于避免覆写那些在最后一次提交index,但是已经被删除
+ * 的index nodes.对于恢复来说,非常有必要(这些旧的index必须在新的index成功写入之前
+ * 保证完整).写入inodex nodes的in-the-gaps方式使用old-idx红黑树.这个红黑树在每次
+ * 提交之后被销毁.
+ */
 void destroy_old_idx(struct ubifs_info *c)
 {
 	struct ubifs_old_idx *old_idx, *n;
@@ -198,15 +213,19 @@ static struct ubifs_znode *copy_znode(struct ubifs_info *c,
 {
 	struct ubifs_znode *zn;
 
+	/* 将znode内容copy到zn */
 	zn = kmemdup(znode, c->max_znode_sz, GFP_NOFS);
 	if (unlikely(!zn))
 		return ERR_PTR(-ENOMEM);
 
 	zn->cnext = NULL;
+	/* 设置zn dirty */
 	__set_bit(DIRTY_ZNODE, &zn->flags);
+	/* COW_ZNODE标志是给原znode使用的,copy出来的zn不需要这个标志 */
 	__clear_bit(COW_ZNODE, &zn->flags);
 
 	ubifs_assert(!ubifs_zn_obsolete(znode));
+	/* 标记znode废弃 */
 	__set_bit(OBSOLETE_ZNODE, &znode->flags);
 
 	if (znode->level != 0) {
@@ -217,6 +236,7 @@ static struct ubifs_znode *copy_znode(struct ubifs_info *c,
 		for (i = 0; i < n; i++) {
 			struct ubifs_zbranch *zbr = &zn->zbranch[i];
 
+			/* zn拷贝完成后,zn->zbranch的parent不能再指向znode了 */
 			if (zbr->znode)
 				zbr->znode->parent = zn;
 		}
@@ -254,12 +274,15 @@ static struct ubifs_znode *dirty_cow_znode(struct ubifs_info *c,
 	struct ubifs_znode *zn;
 	int err;
 
+	/* znode没有cow */
 	if (!ubifs_zn_cow(znode)) {
 		/* znode is not being committed */
 		if (!test_and_set_bit(DIRTY_ZNODE, &znode->flags)) {
+			/* 这个znode是clean的,将其标记为dirty */
 			atomic_long_inc(&c->dirty_zn_cnt);
 			atomic_long_dec(&c->clean_zn_cnt);
 			atomic_long_dec(&ubifs_clean_zn_cnt);
+			/* 将zbr的长度标dirty */
 			err = add_idx_dirt(c, zbr->lnum, zbr->len);
 			if (unlikely(err))
 				return ERR_PTR(err);
@@ -267,6 +290,7 @@ static struct ubifs_znode *dirty_cow_znode(struct ubifs_info *c,
 		return znode;
 	}
 
+	/* znode有cow标志,就复制出一个新的znode */
 	zn = copy_znode(c, znode);
 	if (IS_ERR(zn))
 		return zn;
@@ -279,6 +303,7 @@ static struct ubifs_znode *dirty_cow_znode(struct ubifs_info *c,
 	} else
 		err = 0;
 
+	/* zbr LEB相关部分清空 */
 	zbr->znode = zn;
 	zbr->lnum = 0;
 	zbr->offs = 0;
@@ -435,6 +460,19 @@ static int tnc_read_node_nm(struct ubifs_info *c, struct ubifs_zbranch *zbr,
  * journal nodes (when replying the journal or doing the recovery) and the
  * journal nodes may potentially be corrupted, so checking is required.
  */
+/*
+ * 这个函数尝试通过已知的类型和长度读取一个node,检查这个node,并将其保存到@buf中,
+ * 如果这个node存在,函数返回1,反之,返回0.和ubifs_read_node很相似,除了它不要求实际
+ * 存在一个节点.从返回值可以判断是否一个node被读取.
+ *
+ * 注意,当@c->no_chk_data_crc设置为true的时候,当前函数不检查data node CRC.然而,
+ * @c->mounting 或者 @c->remounting_rw是true,@c->no_chk_data_crc就会被忽略,node的
+ * CRC就会被检查.这是因为,在mounting或者re-mounting之前是R/O模式到R/W模式的时候,
+ * 我们可能需要读取journal nodes(在replying journal或者recovery的时候),journal
+ * nodes有潜在被损坏的风险,所以需要检查CRC.
+ *
+ * 检查项有:1.magic 2.type 3.length 4.crc
+ */
 static int try_read_node(const struct ubifs_info *c, void *buf, int type,
 			 int len, int lnum, int offs)
 {
@@ -461,10 +499,12 @@ static int try_read_node(const struct ubifs_info *c, void *buf, int type,
 	if (node_len != len)
 		return 0;
 
+	/* 不检查data node CRC就直接返回 */
 	if (type == UBIFS_DATA_NODE && c->no_chk_data_crc && !c->mounting &&
 	    !c->remounting_rw)
 		return 1;
 
+	/* 检查node CRC */
 	crc = crc32(UBIFS_CRC32_INIT, buf + 8, node_len - 8);
 	node_crc = le32_to_cpu(ch->crc);
 	if (crc != node_crc)
@@ -483,6 +523,7 @@ static int try_read_node(const struct ubifs_info *c, void *buf, int type,
  * This function tries to read a node and returns %1 if the node is read, %0
  * if the node is not present, and a negative error code in the case of error.
  */
+/* 返回1表示读取node成功,返回0表示node不在flash上(可能是由于断电造成的node corrupted) */
 static int fallible_read_node(struct ubifs_info *c, const union ubifs_key *key,
 			      struct ubifs_zbranch *zbr, void *node)
 {
@@ -493,6 +534,7 @@ static int fallible_read_node(struct ubifs_info *c, const union ubifs_key *key,
 	ret = try_read_node(c, node, key_type(c, key), zbr->len, zbr->lnum,
 			    zbr->offs);
 	if (ret == 1) {
+		/* 读取的node存在 */
 		union ubifs_key node_key;
 		struct ubifs_dent_node *dent = node;
 
@@ -501,6 +543,7 @@ static int fallible_read_node(struct ubifs_info *c, const union ubifs_key *key,
 		if (keys_cmp(c, key, &node_key) != 0)
 			ret = 0;
 	}
+	/* replaying的时候出现leaf不存在的情况,这个branch就称为dangling branch */
 	if (ret == 0 && c->replaying)
 		dbg_mntk(key, "dangling branch LEB %d:%d len %d, key ",
 			zbr->lnum, zbr->offs, zbr->len);
@@ -686,6 +729,11 @@ static int tnc_prev(struct ubifs_info *c, struct ubifs_znode **zn, int *n)
  * entry, i.e. to the entry after which @nm could follow if it were in TNC.
  * This means that @n may be set to %-1 if the leftmost key in @zn is the
  * previous one. A negative error code is returned on failures.
+ */
+/*
+ * 当冲突解决的时候,返回1,并且设置@zn及@n
+ * 如果@nm没有找到,@zn及@n设置前一个值,也就是如果@nm存在的话,
+ * 将会紧跟的那个TNC entry,并且返回0.
  */
 static int resolve_collision(struct ubifs_info *c, const union ubifs_key *key,
 			     struct ubifs_znode **zn, int *n,
@@ -1076,6 +1124,9 @@ static int resolve_collision_directly(struct ubifs_info *c,
  * This function records the path back to the last dirty ancestor, and then
  * dirties the znodes on that path.
  */
+/*
+ * 从下自上进行cow
+ */
 static struct ubifs_znode *dirty_cow_bottom_up(struct ubifs_info *c,
 					       struct ubifs_znode *znode)
 {
@@ -1085,6 +1136,7 @@ static struct ubifs_znode *dirty_cow_bottom_up(struct ubifs_info *c,
 	ubifs_assert(c->zroot.znode);
 	ubifs_assert(znode);
 	if (c->zroot.znode->level > BOTTOM_UP_HEIGHT) {
+		/* 默认使用BOTTOM_UP_HEIGHT的数组长度,如果超过这个长度,bottom_up_buf需要重新分配 */
 		kfree(c->bottom_up_buf);
 		c->bottom_up_buf = kmalloc(c->zroot.znode->level * sizeof(int),
 					   GFP_NOFS);
@@ -1092,6 +1144,7 @@ static struct ubifs_znode *dirty_cow_bottom_up(struct ubifs_info *c,
 			return ERR_PTR(-ENOMEM);
 		path = c->bottom_up_buf;
 	}
+	/* 树的高度不为0 */
 	if (c->zroot.znode->level) {
 		/* Go up until parent is dirty */
 		while (1) {
@@ -1103,23 +1156,28 @@ static struct ubifs_znode *dirty_cow_bottom_up(struct ubifs_info *c,
 			n = znode->iip;
 			ubifs_assert(p < c->zroot.znode->level);
 			path[p++] = n;
+			/* 如果parent不会没有加入提交链表并且是dirty的 */
 			if (!zp->cnext && ubifs_zn_dirty(znode))
 				break;
+			/* parent加入了提交链表或者parent是干净的,向上追溯 */
 			znode = zp;
 		}
 	}
 
 	/* Come back down, dirtying as we go */
+	/* 自上而下dirty路径中所有的znode */
 	while (1) {
 		struct ubifs_zbranch *zbr;
 
 		zp = znode->parent;
 		if (zp) {
+			/* 确保path记录一个有效的slot */
 			ubifs_assert(path[p - 1] >= 0);
 			ubifs_assert(path[p - 1] < zp->child_cnt);
 			zbr = &zp->zbranch[path[--p]];
 			znode = dirty_cow_znode(c, zbr);
 		} else {
+			/* 处理root */
 			ubifs_assert(znode == c->zroot.znode);
 			znode = dirty_cow_znode(c, &c->zroot);
 		}
@@ -1198,6 +1256,7 @@ int ubifs_lookup_level0(struct ubifs_info *c, const union ubifs_key *key,
 			return PTR_ERR(znode);
 	}
 
+	/* znode->level == 0 */
 	*zn = znode;
 	if (exact || !is_hash_key(c, key) || *n != -1) {
 		dbg_tnc("found %d, lvl %d, n %d", exact, znode->level, *n);
@@ -1256,14 +1315,14 @@ int ubifs_lookup_level0(struct ubifs_info *c, const union ubifs_key *key,
 	}
 	if (unlikely(err < 0))
 		return err;
-	/* key值比前一个节点的key要大 */
+	/* key值不等于前一个节点的key值,表示没有找到搜索的节点 */
 	if (keys_cmp(c, key, &znode->zbranch[*n].key)) {
 		dbg_tnc("found 0, lvl %d, n -1", znode->level);
 		*n = -1;
 		return 0;
 	}
 
-	/* key值 <= 前一个节点的key */
+	/* key值 = 前一个节点的key,将前一个节点返回 */
 	dbg_tnc("found 1, lvl %d, n %d", znode->level, *n);
 	*zn = znode;
 	return 1;
@@ -1293,6 +1352,9 @@ int ubifs_lookup_level0(struct ubifs_info *c, const union ubifs_key *key,
  * Note, when the TNC tree is traversed, some znodes may be absent, then this
  * function reads corresponding indexing nodes and inserts them to TNC. In
  * case of failure, a negative error code is returned.
+ */
+/*
+ * 相比ubifs_lookup_level0,当前函数将从root到目标level 0的znode标记为dirty.
  */
 static int lookup_level0_dirty(struct ubifs_info *c, const union ubifs_key *key,
 			       struct ubifs_znode **zn, int *n)
@@ -1369,6 +1431,7 @@ static int lookup_level0_dirty(struct ubifs_info *c, const union ubifs_key *key,
 		return 0;
 	}
 
+	/* key值和前一个节点的key值相等 */
 	if (znode->cnext || !ubifs_zn_dirty(znode)) {
 		znode = dirty_cow_bottom_up(c, znode);
 		if (IS_ERR(znode))
@@ -2519,6 +2582,9 @@ out_unlock:
  *
  * Returns %0 on success or negative error code on failure.
  */
+/*
+ * 从TNC中删除key对应的index entry
+ */
 int ubifs_tnc_remove_nm(struct ubifs_info *c, const union ubifs_key *key,
 			const struct qstr *nm)
 {
@@ -2671,6 +2737,7 @@ out_unlock:
  * with the anode from TNC and returns zero in case of success or a negative
  * error code in case of failure.
  */
+/* 删除@inum以及所有和这个inode关联的拓展属性 */
 int ubifs_tnc_remove_ino(struct ubifs_info *c, ino_t inum)
 {
 	union ubifs_key key1, key2;

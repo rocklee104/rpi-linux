@@ -1472,6 +1472,7 @@ int dbg_check_tnc(struct ubifs_info *c, int extra)
 	long clean_cnt = 0, dirty_cnt = 0;
 	int err, last;
 
+	/* 如果不需要check index的话,就直接返回 */
 	if (!dbg_is_chk_index(c))
 		return 0;
 

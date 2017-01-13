@@ -249,6 +249,8 @@ int ubifs_is_mapped(const struct ubifs_info *c, int lnum)
  * 的风险,所以需要验证CRC.
  *
  * 当前函数执行成功后,返回0.当crc或者magic错误的时候,返回%-EUCLEAN
+ *
+ * 检查的项目有:1.magic 2.type 3.length 4.crc
  */
 int ubifs_check_node(const struct ubifs_info *c, const void *buf, int lnum,
 		     int offs, int quiet, int must_chk_crc)
@@ -923,6 +925,7 @@ int ubifs_write_node(struct ubifs_info *c, void *buf, int len, int lnum,
  * Returns zero in case of success, %-EUCLEAN if CRC mismatched and a negative
  * error code in case of failure.
  */
+/* 从wbuf中读取node,如果wbuf中没有,就从flash上读取 */
 int ubifs_read_node_wbuf(struct ubifs_wbuf *wbuf, void *buf, int type, int len,
 			 int lnum, int offs)
 {
@@ -937,9 +940,11 @@ int ubifs_read_node_wbuf(struct ubifs_wbuf *wbuf, void *buf, int type, int len,
 	ubifs_assert(type >= 0 && type < UBIFS_NODE_TYPES_CNT);
 
 	spin_lock(&wbuf->lock);
+	/* node和wbuf有重叠的部分 */
 	overlap = (lnum == wbuf->lnum && offs + len > wbuf->offs);
 	if (!overlap) {
 		/* We may safely unlock the write-buffer and read the data */
+		/* node和wbuf没有重叠的部分,直接从flash上读取 */
 		spin_unlock(&wbuf->lock);
 		return ubifs_read_node(c, buf, type, len, lnum, offs);
 	}
@@ -955,6 +960,7 @@ int ubifs_read_node_wbuf(struct ubifs_wbuf *wbuf, void *buf, int type, int len,
 
 	if (rlen > 0) {
 		/* Read everything that goes before write-buffer */
+		/* 直接从LEB读取和wbuf不重叠的部分 */
 		err = ubifs_leb_read(c, lnum, buf, offs, rlen, 0);
 		if (err && err != -EBADMSG)
 			return err;

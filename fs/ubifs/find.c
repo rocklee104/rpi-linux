@@ -673,6 +673,14 @@ static const struct ubifs_lprops *scan_for_leb_for_idx(struct ubifs_info *c)
  * If no LEB is found %-ENOSPC is returned. For other failures another negative
  * error code is returned.
  */
+/*
+ * 当前函数查找一个空闲的LEB,返回这个LEB no.返回的LEB被标记为"taken"及"index".
+ *
+ * 只有完全空的LEB被分配.这有两点原因
+ * 1.commit计算需要分配的LEB的数量是基于这些都是empty LEB的假设.
+ * 2.index LEB尾部的空闲空间不能保证空闲,这是因为之前一次的不干净umount会导致
+ *   in-the-gap策略,这将使用到index LEB的尾部空间.
+ */
 int ubifs_find_free_leb_for_idx(struct ubifs_info *c)
 {
 	const struct ubifs_lprops *lprops;
@@ -682,6 +690,7 @@ int ubifs_find_free_leb_for_idx(struct ubifs_info *c)
 
 	lprops = ubifs_fast_find_empty(c);
 	if (!lprops) {
+		/* 没有找到空闲LEB时,就查找可以释放的LEB */
 		lprops = ubifs_fast_find_freeable(c);
 		if (!lprops) {
 			/*
@@ -708,6 +717,7 @@ int ubifs_find_free_leb_for_idx(struct ubifs_info *c)
 		goto out;
 	}
 
+	/* 找到空闲的LEB */
 	lnum = lprops->lnum;
 
 	dbg_find("found LEB %d, free %d, dirty %d, flags %#x",
@@ -767,6 +777,10 @@ static void swap_dirty_idx(struct ubifs_lprops **a, struct ubifs_lprops **b,
  * dirty index LEBs sorted in order of dirty and free space.  This is used by
  * the in-the-gaps method of TNC commit.
  */
+/*
+ * 这个函数在提交的时候被调用,它创建一个LEB no数组,数组中成员是根据dirty及free space
+ * 排列的.这个数组被TNC commit的in-the-gaps method使用.
+ */
 int ubifs_save_dirty_idx_lnums(struct ubifs_info *c)
 {
 	int i;
@@ -774,9 +788,11 @@ int ubifs_save_dirty_idx_lnums(struct ubifs_info *c)
 	ubifs_get_lprops(c);
 	/* Copy the LPROPS_DIRTY_IDX heap */
 	c->dirty_idx.cnt = c->lpt_heap[LPROPS_DIRTY_IDX - 1].cnt;
+	/* 拷贝c->lpt_heap到c->dirty_idx */
 	memcpy(c->dirty_idx.arr, c->lpt_heap[LPROPS_DIRTY_IDX - 1].arr,
 	       sizeof(void *) * c->dirty_idx.cnt);
 	/* Sort it so that the dirtiest is now at the end */
+	/* 排列dirty_idx,最脏的LEB no放在arry的最后 */
 	sort(c->dirty_idx.arr, c->dirty_idx.cnt, sizeof(void *),
 	     (int (*)(const void *, const void *))cmp_dirty_idx,
 	     (void (*)(void *, void *, int))swap_dirty_idx);
@@ -787,6 +803,7 @@ int ubifs_save_dirty_idx_lnums(struct ubifs_info *c)
 			 c->dirty_idx.arr[c->dirty_idx.cnt - 1]->dirty,
 			 c->dirty_idx.arr[c->dirty_idx.cnt - 1]->free);
 	/* Replace the lprops pointers with LEB numbers */
+	/* 将lprops指针转换为LEB no */
 	for (i = 0; i < c->dirty_idx.cnt; i++)
 		c->dirty_idx.arr[i] = (void *)(size_t)c->dirty_idx.arr[i]->lnum;
 	ubifs_release_lprops(c);
@@ -936,12 +953,15 @@ static int find_dirtiest_idx_leb(struct ubifs_info *c)
 		if (!c->dirty_idx.cnt)
 			return -ENOSPC;
 		/* The lprops pointers were replaced by LEB numbers */
+		/* 在ubifs_save_dirty_idx_lnums中lprops指针被转换为LEB no*/
 		lnum = (size_t)c->dirty_idx.arr[--c->dirty_idx.cnt];
 		lp = ubifs_lpt_lookup(c, lnum);
 		if (IS_ERR(lp))
 			return PTR_ERR(lp);
+		/* 如果lprop被占用或者不是用于index那么就重新查找 */
 		if ((lp->flags & LPROPS_TAKEN) || !(lp->flags & LPROPS_INDEX))
 			continue;
+		/* 没有LPROPS_TAKEN并且有LPROPS_INDEX,就设置LPROPS_TAKEN */
 		lp = ubifs_change_lp(c, lp, LPROPS_NC, LPROPS_NC,
 				     lp->flags | LPROPS_TAKEN, 0);
 		if (IS_ERR(lp))
@@ -963,6 +983,7 @@ static int find_dirtiest_idx_leb(struct ubifs_info *c)
  * dirty space that can be used without overwriting index nodes that were in the
  * last index committed.
  */
+/* 试图找到最后一次提交以来最脏的index LEB */
 int ubifs_find_dirty_idx_leb(struct ubifs_info *c)
 {
 	int err;
@@ -973,6 +994,7 @@ int ubifs_find_dirty_idx_leb(struct ubifs_info *c)
 	 * We made an array of the dirtiest index LEB numbers as at the start of
 	 * last commit.  Try that array first.
 	 */
+	/* 找到最脏的LEB */
 	err = find_dirtiest_idx_leb(c);
 
 	/* Next try scanning the entire LPT */

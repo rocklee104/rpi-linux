@@ -68,6 +68,7 @@ struct ubifs_bud *ubifs_search_bud(struct ubifs_info *c, int lnum)
  *
  * This functions returns the wbuf for @lnum or %NULL if there is not one.
  */
+/* 获取与LEB相关的wbuf */
 struct ubifs_wbuf *ubifs_get_wbuf(struct ubifs_info *c, int lnum)
 {
 	struct rb_node *p;
@@ -86,6 +87,7 @@ struct ubifs_wbuf *ubifs_get_wbuf(struct ubifs_info *c, int lnum)
 		else if (lnum > bud->lnum)
 			p = p->rb_right;
 		else {
+			/* lnum == bud->lnum */
 			jhead = bud->jhead;
 			spin_unlock(&c->buds_lock);
 			return &c->jheads[jhead].wbuf;
@@ -320,6 +322,7 @@ static void remove_buds(struct ubifs_info *c)
 		bud = rb_entry(p1, struct ubifs_bud, rb);
 		wbuf = &c->jheads[bud->jhead].wbuf;
 
+		/* 不能处理journal heads指向的LEB */
 		if (wbuf->lnum == bud->lnum) {
 			/*
 			 * Do not remove buds which are pointed to by journal
@@ -431,7 +434,7 @@ int ubifs_log_start_commit(struct ubifs_info *c, int *ltail_lnum)
 	}
 
 	/* Must ensure next LEB has been unmapped */
-	/* 确保journal head使用的LEB是unmap */
+	/* 写入之前需要unmap,确保内容清空 */
 	err = ubifs_leb_unmap(c, c->lhead_lnum);
 	if (err)
 		goto out;

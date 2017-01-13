@@ -132,6 +132,11 @@ struct ubifs_znode *ubifs_tnc_levelorder_next(struct ubifs_znode *zr,
  *     closest branch is returned in @n; the slot if all keys in this znode are
  *     greater than @key, then %-1 is returned in @n.
  */
+/*
+ * 完全匹配,返回1,branch中的slot number保存在@n中
+ * 非完全匹配,返回0.最接近key值的slot(左侧)保存在@n中.如果znode的所有key值都比@key大,
+ * @n中保存-1.
+ */
 int ubifs_search_zbranch(const struct ubifs_info *c,
 			 const struct ubifs_znode *znode,
 			 const union ubifs_key *key, int *n)
@@ -302,8 +307,8 @@ static int read_znode(struct ubifs_info *c, int lnum, int offs, int len,
 		goto out_dump;
 	}
 
+	/* 为每一个znode的child分配zbranch */
 	for (i = 0; i < znode->child_cnt; i++) {
-		/* 为每一个child分配zbranch */
 		const struct ubifs_branch *br = ubifs_idx_branch(c, idx, i);
 		struct ubifs_zbranch *zbr = &znode->zbranch[i];
 
@@ -340,6 +345,7 @@ static int read_znode(struct ubifs_info *c, int lnum, int offs, int len,
 		if (znode->level)
 			continue;
 
+		/* level 0,检查不同类型的range是否合理 */
 		type = key_type(c, &zbr->key);
 		if (c->ranges[type].max_len == 0) {
 			if (zbr->len != c->ranges[type].len) {
@@ -460,6 +466,7 @@ out:
  * zero in case of success or a negative negative error code in case of
  * failure.
  */
+/* 从flash上读取叶子节点 */
 int ubifs_tnc_read_node(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 			void *node)
 {
@@ -471,6 +478,7 @@ int ubifs_tnc_read_node(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 	 * 'zbr' has to point to on-flash node. The node may sit in a bud and
 	 * may even be in a write buffer, so we have to take care about this.
 	 */
+	/* 通过LEB->bud->wbuf找打与LEB相关的wbuf */
 	wbuf = ubifs_get_wbuf(c, zbr->lnum);
 	if (wbuf)
 		err = ubifs_read_node_wbuf(wbuf, node, type, zbr->len,
@@ -485,6 +493,7 @@ int ubifs_tnc_read_node(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 	}
 
 	/* Make sure the key of the read node is correct */
+	/* ubifs_read_node_wbuf和ubifs_read_node只检查是否是合法的node,而没有对key进行匹配 */
 	key_read(c, node + UBIFS_KEY_OFFSET, &key1);
 	if (!keys_eq(c, key, &key1)) {
 		ubifs_err(c, "bad key in node at LEB %d:%d",

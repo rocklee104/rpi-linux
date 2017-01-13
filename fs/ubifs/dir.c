@@ -557,6 +557,7 @@ out_cancel:
 static int ubifs_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct ubifs_info *c = dir->i_sb->s_fs_info;
+	/* 将要被unlink的inode */
 	struct inode *inode = d_inode(dentry);
 	struct ubifs_inode *dir_ui = ubifs_inode(dir);
 	int sz_change = CALC_DENT_SIZE(dentry->d_name.len);
@@ -590,6 +591,7 @@ static int ubifs_unlink(struct inode *dir, struct dentry *dentry)
 	lock_2_inodes(dir, inode);
 	inode->i_ctime = ubifs_current_time(dir);
 	drop_nlink(inode);
+	/* dir中要减少被删除文件目录项的长度 */
 	dir->i_size -= sz_change;
 	dir_ui->ui_size = dir->i_size;
 	dir->i_mtime = dir->i_ctime = inode->i_ctime;

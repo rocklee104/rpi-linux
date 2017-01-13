@@ -144,6 +144,7 @@ static int do_commit(struct ubifs_info *c)
 	err = ubifs_log_start_commit(c, &new_ltail_lnum);
 	if (err)
 		goto out_up;
+	/* 提交TNC,获取最新的zroot */
 	err = ubifs_tnc_start_commit(c, &zroot);
 	if (err)
 		goto out_up;

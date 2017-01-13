@@ -171,6 +171,7 @@ static inline int ubifs_encode_dev(union ubifs_dev_desc *dev, dev_t rdev)
  */
 static inline int ubifs_add_dirt(struct ubifs_info *c, int lnum, int dirty)
 {
+	/* 没有什么属性要修改,只是增加dirty的字节数 */
 	return ubifs_update_one_lp(c, lnum, LPROPS_NC, dirty, 0, 0);
 }
 
@@ -194,6 +195,7 @@ static inline int ubifs_return_leb(struct ubifs_info *c, int lnum)
  * @c: the UBIFS file-system description object
  * @child_cnt: number of children of this index node
  */
+/* 磁盘上index node的大小 */
 static inline int ubifs_idx_node_sz(const struct ubifs_info *c, int child_cnt)
 {
 	return UBIFS_IDX_NODE_SZ + (UBIFS_BRANCH_SZ + c->key_len) * child_cnt;

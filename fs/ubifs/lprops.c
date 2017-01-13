@@ -790,6 +790,7 @@ const struct ubifs_lprops *ubifs_fast_find_free(struct ubifs_info *c)
  * This function returns LEB properties for an empty LEB or %NULL if the
  * function is unable to find an empty LEB quickly.
  */
+/* 从empty_list中找到一个空闲的LEB */
 const struct ubifs_lprops *ubifs_fast_find_empty(struct ubifs_info *c)
 {
 	struct ubifs_lprops *lprops;

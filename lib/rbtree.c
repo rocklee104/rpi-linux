@@ -447,6 +447,7 @@ EXPORT_SYMBOL(__rb_insert_augmented);
 /*
  * This function returns the first node (in sort order) of the tree.
  */
+/* 获取rb-tree的第一个node */
 struct rb_node *rb_first(const struct rb_root *root)
 {
 	struct rb_node	*n;
@@ -484,6 +485,7 @@ struct rb_node *rb_next(const struct rb_node *node)
 	 * If we have a right-hand child, go down and then left as far
 	 * as we can.
 	 */
+	/* 如果有right-hand child,就一直向下去最左边的node,这个node会刚好大于当前node */
 	if (node->rb_right) {
 		node = node->rb_right; 
 		while (node->rb_left)
@@ -498,9 +500,15 @@ struct rb_node *rb_next(const struct rb_node *node)
 	 * parent, keep going up. First time it's a left-hand child of its
 	 * parent, said parent is our 'next' node.
 	 */
+	/*
+	 * 如果没有right-hand child.向下搜索的节点都会小于当前节点.所以next必须到
+	 * 当前节点的parent继续搜索.如果parent的rb_right是当前node的话,说明仍然没
+	 * 有找到比当前node大的节点,继续向上搜索.
+	 */
 	while ((parent = rb_parent(node)) && node == parent->rb_right)
 		node = parent;
 
+	/* 当前node是parent的left node */
 	return parent;
 }
 EXPORT_SYMBOL(rb_next);

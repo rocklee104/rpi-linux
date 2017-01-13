@@ -560,6 +560,7 @@ out_cancel:
 	return err;
 }
 
+/* 删除文件时并不会调用这个函数,只有在setfattr -x会调用 */
 int ubifs_removexattr(struct dentry *dentry, const char *name)
 {
 	struct inode *inode, *host = d_inode(dentry);

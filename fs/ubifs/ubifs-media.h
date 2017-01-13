@@ -751,6 +751,7 @@ struct ubifs_ref_node {
  * @len: target node length
  * @key: key
  */
+/* 磁盘上的branch节点 */
 struct ubifs_branch {
 	__le32 lnum;
 	__le32 offs;
@@ -765,6 +766,7 @@ struct ubifs_branch {
  * @level: tree level
  * @branches: LEB number / offset / length / key branches
  */
+/* 磁盘上的indexing node */
 struct ubifs_idx_node {
 	struct ubifs_ch ch;
 	__le16 child_cnt;

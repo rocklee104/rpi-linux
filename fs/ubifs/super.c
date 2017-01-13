@@ -343,6 +343,7 @@ static void ubifs_evict_inode(struct inode *inode)
 	struct ubifs_info *c = inode->i_sb->s_fs_info;
 	struct ubifs_inode *ui = ubifs_inode(inode);
 
+	/* xattr inode由ubifs_removexattr处理 */
 	if (ui->xattr)
 		/*
 		 * Extended attribute inode deletions are fully handled in
@@ -362,6 +363,7 @@ static void ubifs_evict_inode(struct inode *inode)
 	if (is_bad_inode(inode))
 		goto out;
 
+	/* inode数据大小清空 */
 	ui->ui_size = inode->i_size = 0;
 	err = ubifs_jnl_delete_inode(c, inode);
 	if (err)

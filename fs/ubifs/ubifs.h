@@ -194,7 +194,9 @@ enum {
  */
 enum {
 	DIRTY_ZNODE    = 0,
+	/* znode已经被提交(加入了c->cnext链表),在改变这个znode之前,这个znode的新的实例被创建 */
 	COW_ZNODE      = 1,
+	/* 被废弃的znode,但是这个znode仍然处于提交过程中 */
 	OBSOLETE_ZNODE = 2,
 };
 
@@ -632,11 +634,13 @@ struct ubifs_cnode {
  * @num: node number
  * @lprops: LEB properties array
  */
+/* LEB属性叶子 */
 struct ubifs_pnode {
 	struct ubifs_nnode *parent;
 	struct ubifs_cnode *cnext;
 	unsigned long flags;
 	int iip;
+	/* pnodes的level总是0 */
 	int level;
 	int num;
 	struct ubifs_lprops lprops[UBIFS_LPT_FANOUT];
@@ -672,6 +676,7 @@ struct ubifs_nbranch {
  */
 struct ubifs_nnode {
 	struct ubifs_nnode *parent;
+	/* 下一个需要提交的cnode */
 	struct ubifs_cnode *cnext;
 	unsigned long flags;
 	int iip;
@@ -689,7 +694,9 @@ struct ubifs_nnode {
  * There are %LPROPS_HEAP_CNT heaps.
  */
 struct ubifs_lpt_heap {
+	/* ubifs_lprops指针数组 */
 	struct ubifs_lprops **arr;
+	/* 数组成员个数 */
 	int cnt;
 	int max_cnt;
 };
@@ -752,6 +759,7 @@ struct ubifs_wbuf {
 	struct ubifs_info *c;
 	void *buf;
 	int lnum;
+	/* LEB内的偏移 */
 	int offs;
 	int avail;
 	int used;
@@ -781,6 +789,7 @@ struct ubifs_wbuf {
  */
 struct ubifs_bud {
 	int lnum;
+	/* 相当于offset */
 	int start;
 	/* 当前bud属于的journal head number */
 	int jhead;
@@ -1367,13 +1376,14 @@ struct ubifs_info {
 
 	/* log head所在LEB no */
 	int lhead_lnum;
-	/* log head在LEB中的offs */
+	/* log head在LEB中的offs,当lhead_lnum == ltail_lnum,表示log区域空 */
 	int lhead_offs;
 	/* log tail所在的LEB no, offs为0 */
 	int ltail_lnum;
 	struct mutex log_mutex;
 	/* log需要最小的字节数,一般是一个LEB大小 */
 	int min_log_bytes;
+	/* commit期间提交buds的临时字节数 */
 	long long cmt_bud_bytes;
 
 	struct rb_root buds;
@@ -1384,6 +1394,7 @@ struct ubifs_info {
 	struct ubifs_jhead *jheads;
 	long long max_bud_bytes;
 	long long bg_bud_bytes;
+	/* 链表头,链接当commit完成后需要释放的buds */
 	struct list_head old_buds;
 	int max_bud_cnt;
 
@@ -1394,6 +1405,7 @@ struct ubifs_info {
 
 	unsigned int big_lpt:1;
 	unsigned int space_fixup:1;
+	/* 读取data node的时候,不检查crc(recovery的情况下除外) */
 	unsigned int no_chk_data_crc:1;
 	unsigned int bulk_read:1;
 	unsigned int default_compr:2;
@@ -1401,18 +1413,30 @@ struct ubifs_info {
 
 	struct mutex tnc_mutex;
 	struct ubifs_zbranch zroot;
+	/* next znode to commit,链表尾,链表成员是ubifs_znode->cnext */
 	struct ubifs_znode *cnext;
+	/* next znode to commit to empty space */
 	struct ubifs_znode *enext;
+	/* array of LEBs used by the in-gaps commit method */
 	int *gap_lebs;
+	/* commit buffer */
 	void *cbuf;
+	/* in-the-gaps method提交时使用的buf */
 	void *ileb_buf;
+	/* ileb_buf的长度 */
 	int ileb_len;
+	/* index head使用的LEB no */
 	int ihead_lnum;
+	/* index head的偏移 */
 	int ihead_offs;
+	/* 记录预分配的LEB */
 	int *ilebs;
+	/* pre-allocated index LEBs的数量 */
 	int ileb_cnt;
+	/* next ilebs */
 	int ileb_nxt;
 	struct rb_root old_idx;
+	/* 用于自下而上cow的buf */
 	int *bottom_up_buf;
 
 	struct ubifs_mst_node *mst_node;
@@ -1453,6 +1477,7 @@ struct ubifs_info {
 	uint32_t (*key_hash)(const char *str, int len);
 	int key_fmt;
 	int key_len;
+	/* 每一个indexing node的fanout */
 	int fanout;
 
 	int min_io_size;
@@ -1593,7 +1618,7 @@ struct ubifs_info {
 	struct ubifs_cnode *lpt_cnext;
 	/* array of heaps of categorized lprops */
 	struct ubifs_lpt_heap lpt_heap[LPROPS_HEAP_CNT];
-	/* a (reverse sorted) copy of the LPROPS_DIRTY_IDX heap as at previous commit start */
+	/* 临时数组,保存lpt_heap中排好序的dirty index LEB,最脏的index LEB放在最后 */
 	struct ubifs_lpt_heap dirty_idx;
 	/* un-categorized LEBs链表 */
 	struct list_head uncat_list;
