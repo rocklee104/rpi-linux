@@ -134,8 +134,8 @@ struct ubifs_znode *ubifs_tnc_levelorder_next(struct ubifs_znode *zr,
  */
 /*
  * 完全匹配,返回1,branch中的slot number保存在@n中
- * 非完全匹配,返回0.最接近key值的slot(左侧)保存在@n中.如果znode的所有key值都比@key大,
- * @n中保存-1.
+ * 非完全匹配,返回0.最接近key值的slot(左侧)保存在@n中.
+ * 如果znode的所有key值都比@key大,@n中保存-1.
  */
 int ubifs_search_zbranch(const struct ubifs_info *c,
 			 const struct ubifs_znode *znode,
@@ -466,7 +466,7 @@ out:
  * zero in case of success or a negative negative error code in case of
  * failure.
  */
-/* 从flash上读取叶子节点 */
+/* 从flash上读取叶子节点到node */
 int ubifs_tnc_read_node(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 			void *node)
 {
@@ -478,7 +478,7 @@ int ubifs_tnc_read_node(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 	 * 'zbr' has to point to on-flash node. The node may sit in a bud and
 	 * may even be in a write buffer, so we have to take care about this.
 	 */
-	/* 通过LEB->bud->wbuf找打与LEB相关的wbuf */
+	/* 通过LEB->bud->jhead->wbuf找打与LEB相关的wbuf */
 	wbuf = ubifs_get_wbuf(c, zbr->lnum);
 	if (wbuf)
 		err = ubifs_read_node_wbuf(wbuf, node, type, zbr->len,

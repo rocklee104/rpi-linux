@@ -542,7 +542,7 @@ struct ubifs_dent_node {
 	__u8 padding1;
 	/* 文件类型 */
 	__u8 type;
-	/* name的长度 */
+	/* directory node及xattr node name的长度 */
 	__le16 nlen;
 	__u8 padding2[4]; /* Watch 'zero_dent_node_unused()' if changing! */
 	/* 如果是xdent,那么name记录的是xattr的name,value保存在xattr inode data中 */

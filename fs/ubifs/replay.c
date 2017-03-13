@@ -447,12 +447,14 @@ static int insert_dent(struct ubifs_info *c, int lnum, int offs, int len,
  * This function validates directory or extended attribute entry node @dent.
  * Returns zero if the node is all right and a %-EINVAL if not.
  */
+/* 验证directory 或者attr entry是否有效 */
 int ubifs_validate_entry(struct ubifs_info *c,
 			 const struct ubifs_dent_node *dent)
 {
 	int key_type = key_type_flash(c, dent->key);
 	int nlen = le16_to_cpu(dent->nlen);
 
+	/* 主要检查名称长度是否合法 */
 	if (le32_to_cpu(dent->ch.len) != nlen + UBIFS_DENT_NODE_SZ + 1 ||
 	    dent->type >= UBIFS_ITYPES_CNT ||
 	    nlen > UBIFS_MAX_NLEN || dent->name[nlen] != 0 ||

@@ -593,7 +593,7 @@ static int layout_commit(struct ubifs_info *c, int no_space, int cnt)
  * find_first_dirty - find first dirty znode.
  * @znode: znode to begin searching from
  */
-/* 找到第一个dirty的znode */
+/* 找到第一个dirty的znode(level 0) */
 static struct ubifs_znode *find_first_dirty(struct ubifs_znode *znode)
 {
 	int i, cont;
@@ -609,16 +609,18 @@ static struct ubifs_znode *find_first_dirty(struct ubifs_znode *znode)
 		}
 		cont = 0;
 		for (i = 0; i < znode->child_cnt; i++) {
+			/* 遍历znode的每一个子节点 */
 			struct ubifs_zbranch *zbr = &znode->zbranch[i];
 
 			if (zbr->znode && ubifs_zn_dirty(zbr->znode)) {
+				/* 向其子节点追溯,直到level 0 */
 				znode = zbr->znode;
 				cont = 1;
 				break;
 			}
 		}
 		if (!cont) {
-			/* 如果其子节点都是clean的 */
+			/* 如果其子节点都是clean的,其子孙节点也不可能是dirty的 */
 			if (ubifs_zn_dirty(znode))
 				return znode;
 			return NULL;
@@ -632,16 +634,18 @@ static struct ubifs_znode *find_first_dirty(struct ubifs_znode *znode)
  */
 static struct ubifs_znode *find_next_dirty(struct ubifs_znode *znode)
 {
+	/* 下一个znode的索引 */
 	int n = znode->iip + 1;
 
 	/* 当前znode是脏的,只能向其parent追溯 */
 	znode = znode->parent;
 	if (!znode)
+		/* root znode */
 		return NULL;
 	for (; n < znode->child_cnt; n++) {
 		struct ubifs_zbranch *zbr = &znode->zbranch[n];
 
-		/* 如果znode dirty,调用find_first_dirty找到其第一个dirty的子节点 */
+		/* 如果znode dirty,调用find_first_dirty找到其第一个dirty的子节点(level 0) */
 		if (zbr->znode && ubifs_zn_dirty(zbr->znode))
 			return find_first_dirty(zbr->znode);
 	}
@@ -654,7 +658,10 @@ static struct ubifs_znode *find_next_dirty(struct ubifs_znode *znode)
  *
  * This function returns the number of znodes to commit.
  */
-/* 创建需要提交的dirty znodes的链表,返回需要提交的znode的个数 */
+/*
+ * 创建需要提交的dirty znodes的链表,返回需要提交的znode的个数.
+ * 将tnc中所有dirty的znode设置cow标志,等待ubifs_tnc_end_commit清除
+ */
 static int get_znodes_to_commit(struct ubifs_info *c)
 {
 	struct ubifs_znode *znode, *cnext;
@@ -677,6 +684,7 @@ static int get_znodes_to_commit(struct ubifs_info *c)
 			znode->cnext = c->cnext;
 			break;
 		}
+		/* cnext一般是level 0 */
 		znode->cnext = cnext;
 		znode = cnext;
 		cnt += 1;

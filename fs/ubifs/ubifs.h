@@ -1413,7 +1413,10 @@ struct ubifs_info {
 
 	struct mutex tnc_mutex;
 	struct ubifs_zbranch zroot;
-	/* next znode to commit,链表尾,链表成员是ubifs_znode->cnext */
+	/*
+	 * next znode to commit,链表尾,链表成员是ubifs_znode->cnext,
+	 * 在这个链表中的成员都有COW_ZNODE标志.
+	 */
 	struct ubifs_znode *cnext;
 	/* next znode to commit to empty space */
 	struct ubifs_znode *enext;

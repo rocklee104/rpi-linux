@@ -236,7 +236,7 @@ static struct ubifs_znode *copy_znode(struct ubifs_info *c,
 		for (i = 0; i < n; i++) {
 			struct ubifs_zbranch *zbr = &zn->zbranch[i];
 
-			/* zn拷贝完成后,zn->zbranch的parent不能再指向znode了 */
+			/* zn拷贝完成后,zn->zbranch的parent指针不能再指向znode了 */
 			if (zbr->znode)
 				zbr->znode->parent = zn;
 		}
@@ -274,7 +274,7 @@ static struct ubifs_znode *dirty_cow_znode(struct ubifs_info *c,
 	struct ubifs_znode *zn;
 	int err;
 
-	/* znode没有cow */
+	/* 在get_znodes_to_commit中会将dirty的znode标记为cow */
 	if (!ubifs_zn_cow(znode)) {
 		/* znode is not being committed */
 		if (!test_and_set_bit(DIRTY_ZNODE, &znode->flags)) {
@@ -287,6 +287,7 @@ static struct ubifs_znode *dirty_cow_znode(struct ubifs_info *c,
 			if (unlikely(err))
 				return ERR_PTR(err);
 		}
+		/* 只有dirty标记的znode直接返回 */
 		return znode;
 	}
 
@@ -334,6 +335,12 @@ static struct ubifs_znode *dirty_cow_znode(struct ubifs_info *c,
  * used with @c->tnc_mutex unlock upon return from the TNC subsystem. But LNC
  * may be changed at any time, e.g. freed by the shrinker.
  */
+/*
+ * 叶子节点可以是non-index nodes,directory entry nodes或者data nodes.叶子节点缓存
+ * 是为了保存反复读取同一个叶子节点而设计的.大部分的东西都被VFS层缓存,然而文件系统
+ * 必须为readdir解决hash冲突而缓存目录项.目前的叶子节点缓存设计非常简单,如果创建
+ * 一个更加复杂的实现,允许目前还没使用,但是可能会使用的错误返回.
+ */
 static int lnc_add(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 		   const void *node)
 {
@@ -352,11 +359,13 @@ static int lnc_add(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 		return err;
 	}
 
+	/* 复制directory entry node */
 	lnc_node = kmemdup(node, zbr->len, GFP_NOFS);
 	if (!lnc_node)
 		/* We don't have to have the cache, so no error */
 		return 0;
 
+	/* 将复制的directory entry node放入zbr->leaf */
 	zbr->leaf = lnc_node;
 	return 0;
 }
@@ -370,6 +379,7 @@ static int lnc_add(struct ubifs_info *c, struct ubifs_zbranch *zbr,
  * This function is similar to 'lnc_add()', but it does not create a copy of
  * @node but inserts @node to TNC directly.
  */
+/* 将node直接加入TNC,没有像lnc_add先复制一份,然后加入TNC */
 static int lnc_add_directly(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 			    void *node)
 {
@@ -413,6 +423,7 @@ static void lnc_free(struct ubifs_zbranch *zbr)
  * added to LNC. Returns zero in case of success or a negative negative error
  * code in case of failure.
  */
+/* 读取一个"hashed"叶子节点 */
 static int tnc_read_node_nm(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 			    void *node)
 {
@@ -420,6 +431,7 @@ static int tnc_read_node_nm(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 
 	ubifs_assert(is_hash_key(c, &zbr->key));
 
+	/* 如果LNC中有叶子节点,就从LNC中copy一份出来 */
 	if (zbr->leaf) {
 		/* Read from the leaf node cache */
 		ubifs_assert(zbr->len != 0);
@@ -427,11 +439,13 @@ static int tnc_read_node_nm(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 		return 0;
 	}
 
+	/* LNC中没有leaf,就从wbuf或者flash上读取 */
 	err = ubifs_tnc_read_node(c, zbr, node);
 	if (err)
 		return err;
 
 	/* Add the node to the leaf node cache */
+	/* 将这个node加入LNC */
 	err = lnc_add(c, zbr, node);
 	return err;
 }
@@ -561,6 +575,7 @@ static int fallible_read_node(struct ubifs_info *c, const union ubifs_key *key,
  * @zbr is less than @nm, and %NAME_GREATER if it is greater than @nm. In case
  * of failure, a negative error code is returned.
  */
+/* 检查dentry node或者xdent node是否和指定的key值匹配 */
 static int matches_name(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 			const struct qstr *nm)
 {
@@ -569,21 +584,26 @@ static int matches_name(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 
 	/* If possible, match against the dent in the leaf node cache */
 	if (!zbr->leaf) {
+		/* leaf节点不在缓存中 */
 		dent = kmalloc(zbr->len, GFP_NOFS);
 		if (!dent)
 			return -ENOMEM;
 
+		/* 将leaf节点读取到dent中 */
 		err = ubifs_tnc_read_node(c, zbr, dent);
 		if (err)
 			goto out_free;
 
 		/* Add the node to the leaf node cache */
+		/* 将leaf节点直接加入LNC,没有像lnc_add一样先copy一份 */
 		err = lnc_add_directly(c, zbr, dent);
 		if (err)
 			goto out_free;
 	} else
+		/* leaf节点在缓存中,直接取出这个节点 */
 		dent = zbr->leaf;
 
+	/* name匹配,除了匹配字符串,还需要匹配字符串长度 */
 	nlen = le16_to_cpu(dent->nlen);
 	err = memcmp(dent->name, nm->name, min_t(int, nlen, nm->len));
 	if (err == 0) {
@@ -678,15 +698,18 @@ static int tnc_next(struct ubifs_info *c, struct ubifs_znode **zn, int *n)
  * This function returns %0 if the previous TNC entry is found, %-ENOENT if
  * there is no next entry, or a negative error code otherwise.
  */
+/* 返回%-ENOENT表示没有parent entry */
 static int tnc_prev(struct ubifs_info *c, struct ubifs_znode **zn, int *n)
 {
 	struct ubifs_znode *znode = *zn;
 	int nn = *n;
 
+	/* 不需要向其parent追溯 */
 	if (nn > 0) {
 		*n = nn - 1;
 		return 0;
 	}
+	/* nn <= 0 */
 	while (1) {
 		struct ubifs_znode *zp;
 
@@ -700,6 +723,7 @@ static int tnc_prev(struct ubifs_info *c, struct ubifs_znode **zn, int *n)
 			if (IS_ERR(znode))
 				return PTR_ERR(znode);
 			while (znode->level != 0) {
+				/* 取最有侧的slot */
 				nn = znode->child_cnt - 1;
 				znode = get_znode(c, znode, nn);
 				if (IS_ERR(znode))
@@ -731,9 +755,8 @@ static int tnc_prev(struct ubifs_info *c, struct ubifs_znode **zn, int *n)
  * previous one. A negative error code is returned on failures.
  */
 /*
- * 当冲突解决的时候,返回1,并且设置@zn及@n
- * 如果@nm没有找到,@zn及@n设置前一个值,也就是如果@nm存在的话,
- * 将会紧跟的那个TNC entry,并且返回0.
+ * 当冲突解决的时候(也就是找到key值和nm完全匹配的znode),返回1,并且设置@zn及@n
+ * 如果@nm没有找到,@zn及@n设置前一个值,也就是如果@nm存在的话,将会紧跟的那个TNC entry,并且返回0.
  */
 static int resolve_collision(struct ubifs_info *c, const union ubifs_key *key,
 			     struct ubifs_znode **zn, int *n,
@@ -741,17 +764,23 @@ static int resolve_collision(struct ubifs_info *c, const union ubifs_key *key,
 {
 	int err;
 
+	/* *zn->level == 0,其直接接叶子节点 */
 	err = matches_name(c, &(*zn)->zbranch[*n], nm);
+	/* 返回错误值 */
 	if (unlikely(err < 0))
 		return err;
+	/* key值完全匹配的前提下,name也完全匹配,那么*zn就是我们找的节点 */
 	if (err == NAME_MATCHES)
 		return 1;
 
+	/* zn的name > nm,需要检查左边的分支 */
 	if (err == NAME_GREATER) {
 		/* Look left */
 		while (1) {
+			/* 不需要记录zn的值,即使返回,也会如comment所示,返回nm对应node的前一个node */
 			err = tnc_prev(c, zn, n);
 			if (err == -ENOENT) {
+				/* 如果没有前一个entry */
 				ubifs_assert(*n == 0);
 				*n = -1;
 				return 0;
@@ -759,6 +788,7 @@ static int resolve_collision(struct ubifs_info *c, const union ubifs_key *key,
 			if (err < 0)
 				return err;
 			if (keys_cmp(c, &(*zn)->zbranch[*n].key, key)) {
+				/* 前一个entry的key值和key不相同,不需要继续向前搜索了 */
 				/*
 				 * We have found the branch after which we would
 				 * like to insert, but inserting in this znode
@@ -788,6 +818,7 @@ static int resolve_collision(struct ubifs_info *c, const union ubifs_key *key,
 				 * case when we go right, because
 				 * 'tnc_insert()' would correct the parent key.
 				 */
+				/* 如果tnc_prev调用得到的node与znode不是同一个,n == -1 */
 				if (*n == (*zn)->child_cnt - 1) {
 					err = tnc_next(c, zn, n);
 					if (err) {
@@ -800,39 +831,52 @@ static int resolve_collision(struct ubifs_info *c, const union ubifs_key *key,
 					ubifs_assert(*n == 0);
 					*n = -1;
 				}
+				/* node的key值和nm的key值都不相同了,表明没有找到和nm对应的node */
 				return 0;
 			}
+			/* 前一个entry的key值和key相同,说明出现冲突 */
 			err = matches_name(c, &(*zn)->zbranch[*n], nm);
 			if (err < 0)
 				return err;
+			/* zn的name < nm(而之前代码处理的zn的name > nm),说明没有找nm对应的node,返回这个pre node */
 			if (err == NAME_LESS)
 				return 0;
+			/* zn的name == nm,表明找到匹配的znode */
 			if (err == NAME_MATCHES)
 				return 1;
+			/* zn的name > nm,需要继续向其pre node搜索 */
 			ubifs_assert(err == NAME_GREATER);
 		}
 	} else {
+		/* zn的name < nm,向右继续查找 */
 		int nn = *n;
+		/* 在tnc_next之前,记录这个znode */
 		struct ubifs_znode *znode = *zn;
 
 		/* Look right */
 		while (1) {
 			err = tnc_next(c, &znode, &nn);
+			/* 没有右边的node了 */
 			if (err == -ENOENT)
 				return 0;
 			if (err < 0)
 				return err;
+			/* 只要key值不匹配,就表示没有找到和完全匹配的节点(key和name完全相同) */
 			if (keys_cmp(c, &znode->zbranch[nn].key, key))
 				return 0;
 			err = matches_name(c, &znode->zbranch[nn], nm);
 			if (err < 0)
 				return err;
+			/* zn的name < nm,但是下一个zn的name > nm,就表示没有找到目标node */
 			if (err == NAME_GREATER)
 				return 0;
+			/* 下一个zn的name依然 < nm,更新zn,保证返回的zn和n在nm指向的node右边*/
 			*zn = znode;
 			*n = nn;
+			/* 找到完全匹配的node */
 			if (err == NAME_MATCHES)
 				return 1;
+			/* 下一个zn的name依然 < nm */
 			ubifs_assert(err == NAME_LESS);
 		}
 	}
@@ -1156,7 +1200,7 @@ static struct ubifs_znode *dirty_cow_bottom_up(struct ubifs_info *c,
 			n = znode->iip;
 			ubifs_assert(p < c->zroot.znode->level);
 			path[p++] = n;
-			/* 如果parent不会没有加入提交链表并且是dirty的 */
+			/* 如果parent没有加入提交链表并且是dirty的,就退出.ubifs提交index node的时候,必须先加入c->cnext */
 			if (!zp->cnext && ubifs_zn_dirty(znode))
 				break;
 			/* parent加入了提交链表或者parent是干净的,向上追溯 */
@@ -1213,6 +1257,7 @@ static struct ubifs_znode *dirty_cow_bottom_up(struct ubifs_info *c,
  * function reads corresponding indexing nodes and inserts them to TNC. In
  * case of failure, a negative error code is returned.
  */
+/* n是zbr在znode中的slot number */
 int ubifs_lookup_level0(struct ubifs_info *c, const union ubifs_key *key,
 			struct ubifs_znode **zn, int *n)
 {
@@ -1237,6 +1282,7 @@ int ubifs_lookup_level0(struct ubifs_info *c, const union ubifs_key *key,
 
 		exact = ubifs_search_zbranch(c, znode, key, n);
 
+		/* 只有znode是level 0才能正常退出循环 */
 		if (znode->level == 0)
 			break;
 
@@ -1413,6 +1459,7 @@ static int lookup_level0_dirty(struct ubifs_info *c, const union ubifs_key *key,
 		return exact;
 	}
 
+	/* 剩下处理 非完全匹配 & hash key & *n == -1的情况 */
 	/*
 	 * See huge comment at 'lookup_level0_dirty()' what is the rest of the
 	 * code.
@@ -1425,6 +1472,7 @@ static int lookup_level0_dirty(struct ubifs_info *c, const union ubifs_key *key,
 	}
 	if (unlikely(err < 0))
 		return err;
+	/* key值不等于前一个节点的key值,表示没有找到搜索的节点 */
 	if (keys_cmp(c, key, &znode->zbranch[*n].key)) {
 		*n = -1;
 		dbg_tnc("found 0, lvl %d, n -1", znode->level);
@@ -1433,6 +1481,7 @@ static int lookup_level0_dirty(struct ubifs_info *c, const union ubifs_key *key,
 
 	/* key值和前一个节点的key值相等 */
 	if (znode->cnext || !ubifs_zn_dirty(znode)) {
+		/* 当znode需要被提交或者znode是干净的情况下 */
 		znode = dirty_cow_bottom_up(c, znode);
 		if (IS_ERR(znode))
 			return PTR_ERR(znode);
@@ -2439,6 +2488,7 @@ out_unlock:
  * This function deletes a leaf node from @n-th slot of @znode. Returns zero in
  * case of success and a negative error code in case of failure.
  */
+/* 删除znode的第n个叶子节点 */
 static int tnc_delete(struct ubifs_info *c, struct ubifs_znode *znode, int n)
 {
 	struct ubifs_zbranch *zbr;
@@ -2453,6 +2503,7 @@ static int tnc_delete(struct ubifs_info *c, struct ubifs_znode *znode, int n)
 	zbr = &znode->zbranch[n];
 	lnc_free(zbr);
 
+	/* 如果调用过dirty_cow_bottom_up,zbr->lnum及zbr->len应该是0 */
 	err = ubifs_add_dirt(c, zbr->lnum, zbr->len);
 	if (err) {
 		ubifs_dump_znode(c, znode);
@@ -2607,6 +2658,7 @@ int ubifs_tnc_remove_nm(struct ubifs_info *c, const union ubifs_key *key,
 		if (err < 0)
 			goto out_unlock;
 		if (err) {
+			/* 冲突被解决 */
 			/* Ensure the znode is dirtied */
 			if (znode->cnext || !ubifs_zn_dirty(znode)) {
 				znode = dirty_cow_bottom_up(c, znode);
@@ -2615,6 +2667,7 @@ int ubifs_tnc_remove_nm(struct ubifs_info *c, const union ubifs_key *key,
 					goto out_unlock;
 				}
 			}
+			/* 没有加入提交链表并且dirty的znode不会被cow */
 			err = tnc_delete(c, znode, n);
 		}
 	}
@@ -2750,6 +2803,7 @@ int ubifs_tnc_remove_ino(struct ubifs_info *c, ino_t inum)
 	 * Walk all extended attribute entries and remove them together with
 	 * corresponding extended attribute inodes.
 	 */
+	/* 取最低的xent key,以方便将这个inode所有的xdent一并移除 */
 	lowest_xent_key(c, &key1, inum);
 	while (1) {
 		ino_t xattr_inum;
@@ -2763,6 +2817,7 @@ int ubifs_tnc_remove_ino(struct ubifs_info *c, ino_t inum)
 			return err;
 		}
 
+		/* 从xent中获取xattr inode的ino */
 		xattr_inum = le64_to_cpu(xent->inum);
 		dbg_tnc("xent '%s', ino %lu", xent->name,
 			(unsigned long)xattr_inum);
@@ -2818,6 +2873,18 @@ int ubifs_tnc_remove_ino(struct ubifs_info *c, ino_t inum)
  * in case of success, %-ENOENT is returned if no entry was found, and a
  * negative error code is returned in case of failure.
  */
+/*
+ * 当前函数查询以及读取指定key之后的下一个directory entry或者xattr entry(如果存在的话).
+ * @nm用于解决冲突.
+ *
+ * 如果不知道当前entry的名称,@nm->name必须要为NULL.这种情况下,当前函数的语义就会有一点
+ * 不同,它返回这个key值对应的entry,而不是下一个.如果这个key没有找到,就返回右侧最接近的
+ * entry.
+ *
+ * 如果需要找到第一个entry,@key必须包含这个inode的可能的最小key值,@name必须为NULL.
+ *
+ * 这个函数返回找到的dentry node或者xentry node.如果没有找到,就返回%-ENOENT.
+ */
 struct ubifs_dent_node *ubifs_tnc_next_ent(struct ubifs_info *c,
 					   union ubifs_key *key,
 					   const struct qstr *nm)
@@ -2837,7 +2904,12 @@ struct ubifs_dent_node *ubifs_tnc_next_ent(struct ubifs_info *c,
 		goto out_unlock;
 
 	if (nm->name) {
+		/* nm->name存在,就返回key值匹配的下一个entry */
 		if (err) {
+			/*
+			 * ubifs_lookup_level0中返回1,表示找到了匹配key值的node.
+			 * 否则返回0,znode记录需要找的node之前的一个node
+			 */
 			/* Handle collisions */
 			err = resolve_collision(c, key, &znode, &n, nm);
 			dbg_tnc("rc returned %d, znode %p, n %d",
@@ -2847,6 +2919,12 @@ struct ubifs_dent_node *ubifs_tnc_next_ent(struct ubifs_info *c,
 		}
 
 		/* Now find next entry */
+		/*
+		 * 1.如果@nm没有找到,调用resolve_collision后,@zn及@n设置nm的左侧node.
+		 * 2.如果@nm找到对应的node,znode和n指向这个node.
+		 *
+		 * 不管@nm有没有找到,调用tnc_next获取nm表示的node的下一个node.
+		 */
 		err = tnc_next(c, &znode, &n);
 		if (unlikely(err))
 			goto out_unlock;
@@ -2856,11 +2934,16 @@ struct ubifs_dent_node *ubifs_tnc_next_ent(struct ubifs_info *c,
 		 * behavior of this function is a little different and it
 		 * returns current entry, not the next one.
 		 */
+		/* nm->name为NULL,返回和key值匹配的entry,并不是如函数名"返回下一个entry" */
 		if (!err) {
 			/*
 			 * However, the given key does not exist in the TNC
 			 * tree and @znode/@n variables contain the closest
 			 * "preceding" element. Switch to the next one.
+			 */
+			/*
+			 * 在nm->name为NULL(需要返回和key值匹配的node)并且之前调用ubifs_lookup_level0,
+			 * 没有精确匹配的情况下,需要返回下一个node.
 			 */
 			err = tnc_next(c, &znode, &n);
 			if (err)
@@ -2868,6 +2951,7 @@ struct ubifs_dent_node *ubifs_tnc_next_ent(struct ubifs_info *c,
 		}
 	}
 
+	/* 通过level 0 znode获取叶子节点 */
 	zbr = &znode->zbranch[n];
 	dent = kmalloc(zbr->len, GFP_NOFS);
 	if (unlikely(!dent)) {
@@ -2879,6 +2963,7 @@ struct ubifs_dent_node *ubifs_tnc_next_ent(struct ubifs_info *c,
 	 * The above 'tnc_next()' call could lead us to the next inode, check
 	 * this.
 	 */
+	/* tnc_next可能会使我们找到属于别的inode的entry,这里需要核实一下 */
 	dkey = &zbr->key;
 	if (key_inum(c, dkey) != key_inum(c, key) ||
 	    key_type(c, dkey) != type) {
@@ -2886,6 +2971,7 @@ struct ubifs_dent_node *ubifs_tnc_next_ent(struct ubifs_info *c,
 		goto out_free;
 	}
 
+	/* 确认这个dent是我们所需要的entry,获取这个叶子节点 */
 	err = tnc_read_node_nm(c, zbr, dent);
 	if (unlikely(err))
 		goto out_free;
