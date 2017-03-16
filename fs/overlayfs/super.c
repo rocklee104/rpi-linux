@@ -728,6 +728,7 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 		}
 	}
 
+	/* 当没有upperdir的时候,workdir也没用 */
 	/* Workdir is useless in non-upper mount */
 	if (!config->upperdir && config->workdir) {
 		pr_info("overlayfs: option \"workdir=%s\" is useless in a non-upper mount, ignore\n",
@@ -790,6 +791,7 @@ out_dput:
 	goto out_unlock;
 }
 
+/* 跳过'\\' */
 static void ovl_unescape(char *s)
 {
 	char *d = s;
@@ -811,12 +813,14 @@ static int ovl_mount_dir_noesc(const char *name, struct path *path)
 		pr_err("overlayfs: empty lowerdir\n");
 		goto out;
 	}
+	/* 根据name获取到path */
 	err = kern_path(name, LOOKUP_FOLLOW, path);
 	if (err) {
 		pr_err("overlayfs: failed to resolve '%s': %i\n", name, err);
 		goto out;
 	}
 	err = -EINVAL;
+	/* 判断overlayfs是否支持这个dentry的flag */
 	if (ovl_dentry_weird(path->dentry)) {
 		pr_err("overlayfs: filesystem on '%s' not supported\n", name);
 		goto out_put;
@@ -840,9 +844,11 @@ static int ovl_mount_dir(const char *name, struct path *path)
 
 	if (tmp) {
 		ovl_unescape(tmp);
+		/* path必须是一个目录 */
 		err = ovl_mount_dir_noesc(tmp, path);
 
 		if (!err)
+			/* upper不能处于nfs中,也就是说upper必须处于local */
 			if (ovl_dentry_remote(path->dentry)) {
 				pr_err("overlayfs: filesystem on '%s' not supported as upperdir\n",
 				       tmp);
@@ -864,6 +870,7 @@ static int ovl_lower_dir(const char *name, struct path *path, long *namelen,
 	if (err)
 		goto out;
 
+	/* 通过path获取到文件系统状态 */
 	err = vfs_statfs(path, &statfs);
 	if (err) {
 		pr_err("overlayfs: statfs failed on '%s'\n", name);
@@ -884,6 +891,7 @@ out:
 }
 
 /* Workdir should not be subdir of upperdir and vice versa */
+/* subdir和workdir不能为父子关系 */
 static bool ovl_workdir_ok(struct dentry *workdir, struct dentry *upperdir)
 {
 	bool ok = false;
@@ -922,6 +930,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	struct dentry *root_dentry;
 	struct ovl_entry *oe;
 	struct ovl_fs *ufs;
+	/* 记录多个lower dir的path */
 	struct path *stack = NULL;
 	char *lowertmp;
 	char *lower;
@@ -936,6 +945,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	if (!ufs)
 		goto out;
 
+	pr_err("rock data: %s\n", (char *)data);
 	err = ovl_parse_opt((char *) data, &ufs->config);
 	if (err)
 		goto out_free_config;
@@ -954,6 +964,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			goto out_free_config;
 		}
 
+		/* 检查upperpath */
 		err = ovl_mount_dir(ufs->config.upperdir, &upperpath);
 		if (err)
 			goto out_free_config;
@@ -965,11 +976,13 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			goto out_put_upperpath;
 		}
 
+		/* 检查workdir */
 		err = ovl_mount_dir(ufs->config.workdir, &workpath);
 		if (err)
 			goto out_put_upperpath;
 
 		err = -EINVAL;
+		/* upperdir必须要和workdir在同一个mnt中 */
 		if (upperpath.mnt != workpath.mnt) {
 			pr_err("overlayfs: workdir and upperdir must reside under the same mount\n");
 			goto out_put_workpath;
@@ -978,6 +991,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			pr_err("overlayfs: workdir and upperdir must be separate subtrees\n");
 			goto out_put_workpath;
 		}
+		/* overlay的s_stack_depth需要和upperdir所在sb相同 */
 		sb->s_stack_depth = upperpath.mnt->mnt_sb->s_stack_depth;
 	}
 	err = -ENOMEM;
@@ -992,6 +1006,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		       OVL_MAX_STACK);
 		goto out_free_lowertmp;
 	} else if (!ufs->config.upperdir && stacklen == 1) {
+		/* upperdir不存在的时候,lowerdir必须有2个以上 */
 		pr_err("overlayfs: at least 2 lowerdir are needed while upperdir nonexistent\n");
 		goto out_free_lowertmp;
 	}
@@ -1001,7 +1016,12 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_free_lowertmp;
 
 	lower = lowertmp;
+	pr_err("ufs->config.lowerdir: %s, lower: %s\n", ufs->config.lowerdir, lower);
 	for (numlower = 0; numlower < stacklen; numlower++) {
+		/*
+		 * ufs->lower_namelen中记录多个lower中最大的namelen.
+		 * sb->s_stack_depth中记录多个lower中最大的s_stack_depth
+		 */
 		err = ovl_lower_dir(lower, &stack[numlower],
 				    &ufs->lower_namelen, &sb->s_stack_depth,
 				    &remote);
@@ -1019,6 +1039,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	if (ufs->config.upperdir) {
+		/* clone upperdir所在的vfsmount */
 		ufs->upper_mnt = clone_private_mount(&upperpath);
 		err = PTR_ERR(ufs->upper_mnt);
 		if (IS_ERR(ufs->upper_mnt)) {

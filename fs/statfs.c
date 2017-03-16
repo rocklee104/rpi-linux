@@ -9,6 +9,7 @@
 #include <linux/uaccess.h>
 #include "internal.h"
 
+/* 将mount_flag转换成f_flag */
 static int flags_by_mnt(int mnt_flags)
 {
 	int flags = 0;
@@ -30,6 +31,7 @@ static int flags_by_mnt(int mnt_flags)
 	return flags;
 }
 
+/* 将s_flag转换成f_flag */
 static int flags_by_sb(int s_flags)
 {
 	int flags = 0;
@@ -46,6 +48,7 @@ static int calculate_f_flags(struct vfsmount *mnt)
 		flags_by_sb(mnt->mnt_sb->s_flags);
 }
 
+/* 通过dentry->sb->获取到fs的状态 */
 static int statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf)
 {
 	int retval;

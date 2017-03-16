@@ -1780,6 +1780,7 @@ struct vfsmount *clone_private_mount(struct path *path)
 		return ERR_PTR(-EINVAL);
 
 	down_read(&namespace_sem);
+	/* clone path所在的mount数据结构,并且指定root dentry是path->dentry */
 	new_mnt = clone_mnt(old_mnt, path->dentry, CL_PRIVATE);
 	up_read(&namespace_sem);
 	if (IS_ERR(new_mnt))
