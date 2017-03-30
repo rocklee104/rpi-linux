@@ -18,6 +18,7 @@
 #include <linux/namei.h>
 #include "overlayfs.h"
 
+/* 每次copy 1MB */
 #define OVL_COPY_UP_CHUNK_SIZE (1 << 20)
 
 int ovl_copy_xattr(struct dentry *old, struct dentry *new)
@@ -30,6 +31,7 @@ int ovl_copy_xattr(struct dentry *old, struct dentry *new)
 	    !new->d_inode->i_op->getxattr)
 		return 0;
 
+	/* buf为NULL,返回拓展属性需要的最小的长度,是所有扩展属性name的总长度 */
 	list_size = vfs_listxattr(old, NULL, 0);
 	if (list_size <= 0) {
 		if (list_size == -EOPNOTSUPP)
@@ -41,15 +43,19 @@ int ovl_copy_xattr(struct dentry *old, struct dentry *new)
 	if (!buf)
 		return -ENOMEM;
 
+	/* 返回写入buffer的长度 */
 	list_size = vfs_listxattr(old, buf, list_size);
 	if (list_size <= 0) {
 		error = list_size;
 		goto out;
 	}
 
+	/* 尽量减少重新分配buffer的次数 */
 	for (name = buf; name < (buf + list_size); name += strlen(name) + 1) {
 retry:
+		/* 获取xattr value的长度 */
 		size = vfs_getxattr(old, name, value, value_size);
+		/* 如果value_size小于xattr value的长度 */
 		if (size == -ERANGE)
 			size = vfs_getxattr(old, name, NULL, 0);
 
@@ -58,6 +64,7 @@ retry:
 			break;
 		}
 
+		/* 前一次的value_size比通过vfs_getxattr获取的size小的时候,就需要重新分配空间 */
 		if (size > value_size) {
 			void *new;
 
@@ -71,6 +78,7 @@ retry:
 			goto retry;
 		}
 
+		/* 将xattr的value写入new */
 		error = vfs_setxattr(new, name, value, size, 0);
 		if (error)
 			break;
@@ -81,6 +89,7 @@ out:
 	return error;
 }
 
+/* 将old中数据copy到new中 */
 static int ovl_copy_up_data(struct path *old, struct path *new, loff_t len)
 {
 	struct file *old_file;
@@ -115,6 +124,7 @@ static int ovl_copy_up_data(struct path *old, struct path *new, loff_t len)
 			break;
 		}
 
+		/* splice操作 */
 		bytes = do_splice_direct(old_file, &old_pos,
 					 new_file, &new_pos,
 					 this_len, SPLICE_F_MOVE);
@@ -145,20 +155,28 @@ static char *ovl_read_symlink(struct dentry *realdentry)
 		goto err;
 
 	res = -ENOMEM;
+	/* 分配一个空闲页面 */
 	buf = (char *) __get_free_page(GFP_KERNEL);
 	if (!buf)
 		goto err;
 
+	/*
+	 * buf需要时用户空间地址(0-3G),但是我们用一个内核地址代替(3G-4G),
+	 * 为了避免kernel中权限检查出现错误,需要使用下面的代码.
+	 */
 	old_fs = get_fs();
 	set_fs(get_ds());
 	/* The cast to a user pointer is valid due to the set_fs() */
+	/* 返回copy的长度 */
 	res = inode->i_op->readlink(realdentry,
 				    (char __user *)buf, PAGE_SIZE - 1);
+	/* 还原addr_limit */
 	set_fs(old_fs);
 	if (res < 0) {
 		free_page((unsigned long) buf);
 		goto err;
 	}
+	/* 字符串以'\0'结尾 */
 	buf[res] = '\0';
 
 	return buf;
@@ -215,11 +233,13 @@ static int ovl_copy_up_locked(struct dentry *workdir, struct dentry *upperdir,
 	umode_t mode = stat->mode;
 	int err;
 
+	/* 在workdir中生成一个临时文件(文件名是 #dentry的地址),    返回这个临时文件的dentry                  */
 	newdentry = ovl_lookup_temp(workdir, dentry);
 	err = PTR_ERR(newdentry);
 	if (IS_ERR(newdentry))
 		goto out;
 
+	/* 在upperdir下找dentry的name */
 	upper = lookup_one_len(dentry->d_name.name, upperdir,
 			       dentry->d_name.len);
 	err = PTR_ERR(upper);
@@ -228,42 +248,51 @@ static int ovl_copy_up_locked(struct dentry *workdir, struct dentry *upperdir,
 
 	/* Can't properly set mode on creation because of the umask */
 	stat->mode &= S_IFMT;
+	/* 在work创建文件,其文件类型由stat决定 */
 	err = ovl_create_real(wdir, newdentry, stat, link, NULL, true);
 	stat->mode = mode;
 	if (err)
 		goto out2;
 
 	if (S_ISREG(stat->mode)) {
+		/* 普通文件在copy up的时候,需要把data一并copy up */
 		struct path upperpath;
 		ovl_path_upper(dentry, &upperpath);
+		/* 没有copy up的upperpath.dentry一定是NULL */
 		BUG_ON(upperpath.dentry != NULL);
 		upperpath.dentry = newdentry;
 
+		/* 将数据从lower dir的文件数据copy到work dir下 */
 		err = ovl_copy_up_data(lowerpath, &upperpath, stat->size);
 		if (err)
 			goto out_cleanup;
 	}
 
+	/* 将lowerpath->dentry的扩展属性copy给临时文件 */
 	err = ovl_copy_xattr(lowerpath->dentry, newdentry);
 	if (err)
 		goto out_cleanup;
 
 	mutex_lock(&newdentry->d_inode->i_mutex);
+	/* 设置临时文件的属性 */
 	err = ovl_set_attr(newdentry, stat);
 	mutex_unlock(&newdentry->d_inode->i_mutex);
 	if (err)
 		goto out_cleanup;
 
+	/* 将work dir中的dentry   r ename到upper dir下 */
 	err = ovl_do_rename(wdir, newdentry, udir, upper, 0);
 	if (err)
 		goto out_cleanup;
 
+	/* 给dentry指定__upperdentry */
 	ovl_dentry_update(dentry, newdentry);
 	newdentry = NULL;
 
 	/*
 	 * Non-directores become opaque when copied up.
 	 */
+	/* copy up的文件都有opaque标志 */
 	if (!S_ISDIR(stat->mode))
 		ovl_dentry_set_opaque(dentry, true);
 out2:
@@ -293,6 +322,11 @@ out_cleanup:
  * d_parent it is possible that the copy up will lock the old parent.  At
  * that point the file will have already been copied up anyway.
  */
+/*
+ * 只有"pure upper"的目录才能被rename(只在upper dir中存在的,而却不会从底层
+ * copy up的目录). 在lower dir或者merge dir中存在的目录是不能被rename的.
+ * 否则将会返回一个-EXDEV错误.
+ */
 int ovl_copy_up_one(struct dentry *parent, struct dentry *dentry,
 		    struct path *lowerpath, struct kstat *stat)
 {
@@ -306,16 +340,20 @@ int ovl_copy_up_one(struct dentry *parent, struct dentry *dentry,
 	struct cred *override_cred;
 	char *link = NULL;
 
+	/* 如果使用了copy up那么就说明upper dir 存在,故需要workdir */
 	if (WARN_ON(!workdir))
 		return -EROFS;
 
+	/* 从parent的dentry中获取数据到parentpath */
 	ovl_path_upper(parent, &parentpath);
+	/* upperdir就是parent的dentry */
 	upperdir = parentpath.dentry;
 
 	err = vfs_getattr(&parentpath, &pstat);
 	if (err)
 		return err;
 
+	/* 如果lower dir指向的是一个符号链接,获取目标文件名 */
 	if (S_ISLNK(stat->mode)) {
 		link = ovl_read_symlink(lowerpath->dentry);
 		if (IS_ERR(link))
@@ -323,6 +361,7 @@ int ovl_copy_up_one(struct dentry *parent, struct dentry *dentry,
 	}
 
 	err = -ENOMEM;
+	/* 创建一个当前task的subjective context(task->cred)的副本 */
 	override_cred = prepare_creds();
 	if (!override_cred)
 		goto out_free_link;
@@ -350,6 +389,7 @@ int ovl_copy_up_one(struct dentry *parent, struct dentry *dentry,
 		pr_err("overlayfs: failed to lock workdir+upperdir\n");
 		goto out_unlock;
 	}
+	/* 还没开始copy up就已经找到upper dentry */
 	upperdentry = ovl_dentry_upper(dentry);
 	if (upperdentry) {
 		/* Raced with another copy-up?  Nothing to do, then... */
@@ -387,11 +427,13 @@ int ovl_copy_up(struct dentry *dentry)
 		struct kstat stat;
 		enum ovl_path_type type = ovl_path_type(dentry);
 
+		/* upper dir中的文件不需要copy up */
 		if (OVL_TYPE_UPPER(type))
 			break;
 
 		next = dget(dentry);
 		/* find the topmost dentry not yet copied up */
+		/* 向上层目录遍历,找到最后一个需要copy up的dentry */
 		for (;;) {
 			parent = dget_parent(next);
 

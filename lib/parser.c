@@ -23,6 +23,7 @@
  * match extremely simple token=arg style patterns. If the pattern is found,
  * the location(s) of the arguments will be returned in the @args array.
  */
+/* 将s中对应p中%s,%d之类的参数拷贝到args中 */
 static int match_one(char *s, const char *p, substring_t args[])
 {
 	char *meta;
@@ -34,18 +35,22 @@ static int match_one(char *s, const char *p, substring_t args[])
 	while(1) {
 		int len = -1;
 		meta = strchr(p, '%');
+		/* 没有%,就需要完全匹配 */
 		if (!meta)
 			return strcmp(p, s) == 0;
 
+		/* 匹配%之前的字符 */
 		if (strncmp(p, s, meta-p))
 			return 0;
 
+		/* 跳过p中%之前的字符 */
 		s += meta - p;
 		p = meta + 1;
 
 		if (isdigit(*p))
 			len = simple_strtoul(p, (char **) &p, 10);
 		else if (*p == '%') {
+			/* 2个%表示对%转义,会打印出% */
 			if (*s++ != '%')
 				return 0;
 			p++;
@@ -58,6 +63,7 @@ static int match_one(char *s, const char *p, substring_t args[])
 		args[argc].from = s;
 		switch (*p++) {
 		case 's': {
+			/* %s的情况 */
 			size_t str_len = strlen(s);
 
 			if (str_len == 0)
@@ -108,6 +114,10 @@ int match_token(char *s, const match_table_t table, substring_t args[])
 {
 	const struct match_token *p;
 
+	/*
+	 * 遍历table中的pattern,检测s是否match,如果匹配就
+	 * 将s中对应p->pattern的%s,%d这种参数拷贝到args中.
+	 */
 	for (p = table; !match_one(s, p->pattern, args) ; p++)
 		;
 

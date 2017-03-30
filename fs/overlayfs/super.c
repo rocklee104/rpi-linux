@@ -27,6 +27,7 @@ MODULE_LICENSE("GPL");
 
 #define OVERLAYFS_SUPER_MAGIC 0x794c7630
 
+/* 保存挂载使用使用的路径名 */
 struct ovl_config {
 	char *lowerdir;
 	char *upperdir;
@@ -36,8 +37,11 @@ struct ovl_config {
 /* private information held for overlayfs's superblock */
 struct ovl_fs {
 	struct vfsmount *upper_mnt;
+	/* lower dir的个数 */
 	unsigned numlower;
+	/* lower mnt指针数组 */
 	struct vfsmount **lower_mnt;
+	/* 指向创建出来的work */
 	struct dentry *workdir;
 	long lower_namelen;
 	/* pathnames of lower and upper dirs, for show_options */
@@ -47,22 +51,27 @@ struct ovl_fs {
 struct ovl_dir_cache;
 
 /* private information held for every overlayfs dentry */
+/* 保存在dentry的d_fsdata中 */
 struct ovl_entry {
 	struct dentry *__upperdentry;
 	struct ovl_dir_cache *cache;
 	union {
 		struct {
+			/* 目录使用扩展属性区别opaque,version记录cache的version */
 			u64 version;
+			/* 文件使用opaque标志 */
 			bool opaque;
 		};
 		struct rcu_head rcu;
 	};
+	/* lower的个数 */
 	unsigned numlower;
 	struct path lowerstack[];
 };
 
 #define OVL_MAX_STACK 500
 
+/* 总返回第一个lower的dentry */
 static struct dentry *__ovl_dentry_lower(struct ovl_entry *oe)
 {
 	return oe->numlower ? oe->lowerstack[0].dentry : NULL;
@@ -70,6 +79,7 @@ static struct dentry *__ovl_dentry_lower(struct ovl_entry *oe)
 
 enum ovl_path_type ovl_path_type(struct dentry *dentry)
 {
+	/* 从dentry的private data中取出ovl_entry */
 	struct ovl_entry *oe = dentry->d_fsdata;
 	enum ovl_path_type type = 0;
 
@@ -81,10 +91,13 @@ enum ovl_path_type ovl_path_type(struct dentry *dentry)
 		 * location. Its purity depends only on opaque flag.
 		 */
 		if (oe->numlower && S_ISDIR(dentry->d_inode->i_mode))
+			/* 有upper也有lower,同时dentry是一个目录的dentry,这种目录就属于merge */
 			type |= __OVL_PATH_MERGE;
 		else if (!oe->opaque)
+			/* 当没有对应的lower, 或者lower对应的是一个文件, 最后没有opaque标志, 就设置pure标志 */
 			type |= __OVL_PATH_PURE;
 	} else {
+		/* 没有upper, lower数量大于1,这样的dentry也属于merge */
 		if (oe->numlower > 1)
 			type |= __OVL_PATH_MERGE;
 	}
@@ -98,6 +111,7 @@ static struct dentry *ovl_upperdentry_dereference(struct ovl_entry *oe)
 
 void ovl_path_upper(struct dentry *dentry, struct path *path)
 {
+	/* 获取overlayfs的sb */
 	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
 	struct ovl_entry *oe = dentry->d_fsdata;
 
@@ -117,6 +131,7 @@ enum ovl_path_type ovl_path_real(struct dentry *dentry, struct path *path)
 	return type;
 }
 
+/* dentry->oe->upperdentry */
 struct dentry *ovl_dentry_upper(struct dentry *dentry)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
@@ -131,18 +146,24 @@ struct dentry *ovl_dentry_lower(struct dentry *dentry)
 	return __ovl_dentry_lower(oe);
 }
 
+/*
+ * overlayfs dentry选择函数
+ * 如果存在upperdir返回upper的dentry,否则返回lower的dentry
+*/
 struct dentry *ovl_dentry_real(struct dentry *dentry)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
 	struct dentry *realdentry;
 
 	realdentry = ovl_upperdentry_dereference(oe);
+	/* 如果没有upper,那么lower的个数一定要大于1 */
 	if (!realdentry)
 		realdentry = __ovl_dentry_lower(oe);
 
 	return realdentry;
 }
 
+/* 如果upper dir有对应的dentry,is_upper是true */
 struct dentry *ovl_entry_real(struct ovl_entry *oe, bool *is_upper)
 {
 	struct dentry *realdentry;
@@ -171,6 +192,7 @@ void ovl_set_dir_cache(struct dentry *dentry, struct ovl_dir_cache *cache)
 	oe->cache = cache;
 }
 
+/* 如果有多个lower dir, 第一个lower dir才是真正意义上的lower dir */
 void ovl_path_lower(struct dentry *dentry, struct path *path)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
@@ -178,6 +200,7 @@ void ovl_path_lower(struct dentry *dentry, struct path *path)
 	*path = oe->numlower ? oe->lowerstack[0] : (struct path) { NULL, NULL };
 }
 
+/* 判断dentry所指向的upper mnt是否能写 */
 int ovl_want_write(struct dentry *dentry)
 {
 	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
@@ -239,6 +262,7 @@ u64 ovl_dentry_version_get(struct dentry *dentry)
 	return oe->version;
 }
 
+/* 判断dentry指向的文件是否是一个whiteout */
 bool ovl_is_whiteout(struct dentry *dentry)
 {
 	struct inode *inode = dentry->d_inode;
@@ -246,6 +270,7 @@ bool ovl_is_whiteout(struct dentry *dentry)
 	return inode && IS_WHITEOUT(inode);
 }
 
+/* 对于目录来说,opaque只能通过xattr指定 */
 static bool ovl_is_opaquedir(struct dentry *dentry)
 {
 	int res;
@@ -364,6 +389,7 @@ static const struct dentry_operations ovl_reval_dentry_operations = {
 
 static struct ovl_entry *ovl_alloc_entry(unsigned int numlower)
 {
+	/* 通过offsetof获取柔性数组下个成员,继而获取整个结构体的大小 */
 	size_t size = offsetof(struct ovl_entry, lowerstack[numlower]);
 	struct ovl_entry *oe = kzalloc(size, GFP_KERNEL);
 
@@ -414,20 +440,30 @@ static inline struct dentry *ovl_lookup_real(struct dentry *dir,
  * Returns next layer in stack starting from top.
  * Returns -1 if this is the last layer.
  */
+/*
+ * upper layer: 0
+ * lower[0]:	1
+ * lower[1]:	2
+ * ...
+*/
 int ovl_path_next(int idx, struct dentry *dentry, struct path *path)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
 
 	BUG_ON(idx < 0);
 	if (idx == 0) {
+		/* 一个overlay只有一个upper,获取upper的path */
 		ovl_path_upper(dentry, path);
+		/* 如果有upperdir,如果有lower dir,不管lowerdir有几个,都返回1 */
 		if (path->dentry)
 			return oe->numlower ? 1 : -1;
+		/*  如果没有upperdir */
 		idx++;
 	}
 	BUG_ON(idx > oe->numlower);
 	*path = oe->lowerstack[idx - 1];
 
+	/* 返回下次循环需要处理的index */
 	return (idx < oe->numlower) ? idx + 1 : -1;
 }
 
@@ -445,14 +481,17 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 	unsigned int i;
 	int err;
 
+	/* 获取父目录的upperdir */
 	upperdir = ovl_upperdentry_dereference(poe);
 	if (upperdir) {
+		/* 当需要查询一个dentry时,首先去父目录的upperdir查找 */
 		this = ovl_lookup_real(upperdir, &dentry->d_name);
 		err = PTR_ERR(this);
 		if (IS_ERR(this))
 			goto out;
 
 		if (this) {
+			/* upperdir是不能在remote fs中的 */
 			if (unlikely(ovl_dentry_remote(this))) {
 				dput(this);
 				err = -EREMOTE;
@@ -581,6 +620,7 @@ static void ovl_put_super(struct super_block *sb)
 	mntput(ufs->upper_mnt);
 	for (i = 0; i < ufs->numlower; i++)
 		mntput(ufs->lower_mnt[i]);
+	/* vfsmount的2级指针可以free,其一级指针交给mntput */
 	kfree(ufs->lower_mnt);
 
 	kfree(ufs->config.lowerdir);
@@ -680,10 +720,12 @@ static char *ovl_next_opt(char **s)
 				break;
 		} else if (*p == ',') {
 			*p = '\0';
+			/* *s指向','后面那个字符,返回','之前的字符串 */
 			*s = p + 1;
 			return sbegin;
 		}
 	}
+	/* 处理以','分隔的最后一部分字符串 */
 	*s = NULL;
 	return sbegin;
 }
@@ -756,10 +798,16 @@ static struct dentry *ovl_workdir_create(struct vfsmount *mnt,
 
 	mutex_lock_nested(&dir->i_mutex, I_MUTEX_PARENT);
 retry:
+	/*
+	 * 在dentry下查找"work",查找过程中会给work分配dentry.如果work->inode存在,
+	 * 说明"work"文件存在,而overylay需要一个新的work,所以需要先将其删除.
+	 * 最后,创建一个work目录.
+	 */
 	work = lookup_one_len(OVL_WORKDIR_NAME, dentry,
 			      strlen(OVL_WORKDIR_NAME));
 
 	if (!IS_ERR(work)) {
+		/* 在ovl_create_real中创建目录 */
 		struct kstat stat = {
 			.mode = S_IFDIR | 0,
 		};
@@ -772,9 +820,11 @@ retry:
 			retried = true;
 			ovl_cleanup(dir, work);
 			dput(work);
+			/* retry之后work->inode还存在表示work没有成功删除 */
 			goto retry;
 		}
 
+		/* 只有work不存在或者被成功删除后,才会创建一个新的work */
 		err = ovl_create_real(dir, work, &stat, NULL, NULL, true);
 		if (err)
 			goto out_dput;
@@ -848,7 +898,7 @@ static int ovl_mount_dir(const char *name, struct path *path)
 		err = ovl_mount_dir_noesc(tmp, path);
 
 		if (!err)
-			/* upper不能处于nfs中,也就是说upper必须处于local */
+			/* upper不能处于nfs中,也就是说upper必须处于local,但是lower可以 */
 			if (ovl_dentry_remote(path->dentry)) {
 				pr_err("overlayfs: filesystem on '%s' not supported as upperdir\n",
 				       tmp);
@@ -879,6 +929,7 @@ static int ovl_lower_dir(const char *name, struct path *path, long *namelen,
 	*namelen = max(*namelen, statfs.f_namelen);
 	*stack_depth = max(*stack_depth, path->mnt->mnt_sb->s_stack_depth);
 
+	/* lower dir可以处于nfs中,但是upper不行 */
 	if (ovl_dentry_remote(path->dentry))
 		*remote = true;
 
@@ -964,7 +1015,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			goto out_free_config;
 		}
 
-		/* 检查upperpath */
+		/* 检查upperpath,并将路径字符串转成path结构 */
 		err = ovl_mount_dir(ufs->config.upperdir, &upperpath);
 		if (err)
 			goto out_free_config;
@@ -1050,6 +1101,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		ufs->workdir = ovl_workdir_create(ufs->upper_mnt, workpath.dentry);
 		err = PTR_ERR(ufs->workdir);
 		if (IS_ERR(ufs->workdir)) {
+			/* work创建失败,文件系统将会以只读方式挂载 */
 			pr_warn("overlayfs: failed to create directory %s/%s (errno: %i); mounting read-only\n",
 				ufs->config.workdir, OVL_WORKDIR_NAME, -err);
 			sb->s_flags |= MS_RDONLY;
@@ -1073,6 +1125,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		 * Make lower_mnt R/O.  That way fchmod/fchown on lower file
 		 * will fail instead of modifying lower fs.
 		 */
+		/* 底层dir的内容不会被overlay修改 */
 		mnt->mnt_flags |= MNT_READONLY;
 
 		ufs->lower_mnt[ufs->numlower] = mnt;
@@ -1089,17 +1142,21 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		sb->s_d_op = &ovl_dentry_operations;
 
 	err = -ENOMEM;
+	/* 构建overlay   entry给root dir */
 	oe = ovl_alloc_entry(numlower);
 	if (!oe)
 		goto out_put_lower_mnt;
 
+	/* 创建overlayfs的rootdir */
 	root_dentry = d_make_root(ovl_new_inode(sb, S_IFDIR, oe));
 	if (!root_dentry)
 		goto out_free_oe;
 
+	/* 之前获取到的uppper及lower的mnt需要释放 */
 	mntput(upperpath.mnt);
 	for (i = 0; i < numlower; i++)
 		mntput(stack[i].mnt);
+	/* lookup出来的work dentry及vfsmount都需要释放 */
 	path_put(&workpath);
 	kfree(lowertmp);
 

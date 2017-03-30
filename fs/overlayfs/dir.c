@@ -14,6 +14,7 @@
 #include <linux/cred.h>
 #include "overlayfs.h"
 
+/* 删除wdentry */
 void ovl_cleanup(struct inode *wdir, struct dentry *wdentry)
 {
 	int err;
@@ -69,6 +70,10 @@ static struct dentry *ovl_whiteout(struct dentry *workdir,
 	return whiteout;
 }
 
+/*
+ * dir:父目录的inode
+ * newdentry: 新增加的dentry
+ */
 int ovl_create_real(struct inode *dir, struct dentry *newdentry,
 		    struct kstat *stat, const char *link,
 		    struct dentry *hardlink, bool debug)
@@ -99,6 +104,7 @@ int ovl_create_real(struct inode *dir, struct dentry *newdentry,
 			break;
 
 		case S_IFLNK:
+			/* 创建符号链接,newdentry->inode也会是一个符号链接的inode */
 			err = ovl_do_symlink(dir, newdentry, link, debug);
 			break;
 
@@ -132,6 +138,7 @@ static void ovl_remove_opaque(struct dentry *upperdentry)
 	}
 }
 
+/* overlayfs目录使用的getattr */
 static int ovl_dir_getattr(struct vfsmount *mnt, struct dentry *dentry,
 			 struct kstat *stat)
 {
@@ -144,6 +151,7 @@ static int ovl_dir_getattr(struct vfsmount *mnt, struct dentry *dentry,
 	if (err)
 		return err;
 
+	/* 无论目录是否merged,ino及dev都不使用realpath的,而使用overlayfs本身的 */
 	stat->dev = dentry->d_sb->s_dev;
 	stat->ino = dentry->d_inode->i_ino;
 
@@ -152,6 +160,7 @@ static int ovl_dir_getattr(struct vfsmount *mnt, struct dentry *dentry,
 	 * correct link count.  nlink=1 seems to pacify 'find' and
 	 * other utilities.
 	 */
+	/* 即使是目录,nlink也设置成1 */
 	if (OVL_TYPE_MERGE(type))
 		stat->nlink = 1;
 

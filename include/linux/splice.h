@@ -13,6 +13,10 @@
 /*
  * Flags passed in from splice/tee/vmsplice
  */
+/*
+ * 如果输出是文件,这个值则会使得操作系统内核尝试从输入管道缓冲区直接
+ * 将数据读入到输出地址空间,这个数据传输过程没有任何数据拷贝操作发生.
+*/
 #define SPLICE_F_MOVE	(0x01)	/* move pages instead of copying */
 #define SPLICE_F_NONBLOCK (0x02) /* don't block on the pipe splicing (but */
 				 /* we may still block on the fd we splice */

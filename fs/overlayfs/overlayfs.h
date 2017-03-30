@@ -11,6 +11,18 @@
 
 struct ovl_entry;
 
+/*
+ * __OVL_PATH_PURE:
+ * 已经在上层文件系统有了,不要copy up
+ *
+ * __OVL_PATH_UPPER:
+ * 文件或者目录在upperdir中存在,那么就会有upper标志.只要这个标志没有
+ * 置位,就表示文件或者目录在lowerdir中.
+ *
+ * __OVL_PATH_MERGE:
+ * 针对目录来说,如果upper和lower中有同名目录,那么这个目录就是merge的.
+ * 或者有多个lower,有两一个以上的lower中有同名目录,这个目录是merge的.
+ */
 enum ovl_path_type {
 	__OVL_PATH_PURE		= (1 << 0),
 	__OVL_PATH_UPPER	= (1 << 1),
@@ -27,6 +39,7 @@ enum ovl_path_type {
 #define OVL_XATTR_PRE_LEN  16
 #define OVL_XATTR_OPAQUE   OVL_XATTR_PRE_NAME"opaque"
 
+/* 直接调用vfs层文件操作函数 */
 static inline int ovl_do_rmdir(struct inode *dir, struct dentry *dentry)
 {
 	int err = vfs_rmdir(dir, dentry);

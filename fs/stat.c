@@ -49,19 +49,23 @@ EXPORT_SYMBOL(generic_fillattr);
  * no attributes to any user.  Any other code probably wants
  * vfs_getattr.
  */
+/* 不需要安全检查的vfs_getattr */
 int vfs_getattr_nosec(struct path *path, struct kstat *stat)
 {
+	/* 通过getattr回调在inode中,所以这里需要使用dentry获取inode */
 	struct inode *inode = d_backing_inode(path->dentry);
 
 	if (inode->i_op->getattr)
 		return inode->i_op->getattr(path->mnt, path->dentry, stat);
 
+	/* 将inode中的属性给stat填充 */
 	generic_fillattr(inode, stat);
 	return 0;
 }
 
 EXPORT_SYMBOL(vfs_getattr_nosec);
 
+/* 获取path这个文件的属性,也就是stat */
 int vfs_getattr(struct path *path, struct kstat *stat)
 {
 	int retval;

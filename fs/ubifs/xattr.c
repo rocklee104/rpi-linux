@@ -266,6 +266,7 @@ out_free:
  * supported extended attribute name-spaces. Returns name-space index in case
  * of success and a negative error code in case of failure.
  */
+/* ubifs支持trusted., user., security.这三个namespace */
 static int check_namespace(const struct qstr *nm)
 {
 	int type;
@@ -435,6 +436,7 @@ ssize_t ubifs_getxattr(struct dentry *dentry, const char *name, void *buf,
 	ubifs_assert(ubifs_inode(host)->xattr_size > ui->data_len);
 
 	mutex_lock(&ui->ui_mutex);
+	/* buf是NULL,就返回xattr value的长度 */
 	if (buf) {
 		/* If @buf is %NULL we are supposed to return the length */
 		if (ui->data_len > size) {
@@ -461,6 +463,7 @@ ssize_t ubifs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	union ubifs_key key;
 	struct inode *host = d_inode(dentry);
 	struct ubifs_info *c = host->i_sb->s_fs_info;
+	/* 获取ubifs的inode */
 	struct ubifs_inode *host_ui = ubifs_inode(host);
 	struct ubifs_dent_node *xent, *pxent = NULL;
 	int err, len, written = 0;
@@ -470,6 +473,7 @@ ssize_t ubifs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		dentry, size);
 
 	len = host_ui->xattr_names + host_ui->xattr_cnt;
+	/* 如果传进来的buffer是空的,那么就返回buffer需要的最小长度 */
 	if (!buffer)
 		/*
 		 * We should return the minimum buffer size which will fit a
@@ -501,6 +505,7 @@ ssize_t ubifs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 
 		/* Show trusted namespace only for "power" users */
 		if (type != TRUSTED_XATTR || capable(CAP_SYS_ADMIN)) {
+			/* 将xattr的name写入buffer */
 			memcpy(buffer + written, nm.name, nm.len + 1);
 			written += nm.len + 1;
 		}

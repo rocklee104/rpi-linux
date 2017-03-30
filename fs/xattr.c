@@ -241,6 +241,7 @@ vfs_getxattr(struct dentry *dentry, const char *name, void *value, size_t size)
 	if (error)
 		return error;
 
+	/* 安全扩展属性相关 */
 	if (!strncmp(name, XATTR_SECURITY_PREFIX,
 				XATTR_SECURITY_PREFIX_LEN)) {
 		const char *suffix = name + XATTR_SECURITY_PREFIX_LEN;

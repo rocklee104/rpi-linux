@@ -26,6 +26,7 @@ struct kstat {
 	kuid_t		uid;
 	kgid_t		gid;
 	dev_t		rdev;
+	/* 文件大小 */
 	loff_t		size;
 	struct timespec  atime;
 	struct timespec	mtime;

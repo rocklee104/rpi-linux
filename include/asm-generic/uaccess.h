@@ -13,16 +13,19 @@
 
 #define MAKE_MM_SEG(s)	((mm_segment_t) { (s) })
 
+/* 内核代码段0-4G */
 #ifndef KERNEL_DS
 #define KERNEL_DS	MAKE_MM_SEG(~0UL)
 #endif
 
+/* 用户空间 */
 #ifndef USER_DS
 #define USER_DS		MAKE_MM_SEG(TASK_SIZE - 1)
 #endif
 
 #ifndef get_fs
 #define get_ds()	(KERNEL_DS)
+/* 获取进程限制的内存大小 */
 #define get_fs()	(current_thread_info()->addr_limit)
 
 static inline void set_fs(mm_segment_t fs)

@@ -2997,6 +2997,7 @@ static inline bool is_root_inode(struct inode *inode)
 	return inode == inode->i_sb->s_root->d_inode;
 }
 
+/* 返回1表示成功 */
 static inline bool dir_emit(struct dir_context *ctx,
 			    const char *name, int namelen,
 			    u64 ino, unsigned type)

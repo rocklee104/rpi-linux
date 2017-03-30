@@ -118,6 +118,7 @@ static int minix_readdir(struct file *file, struct dir_context *ctx)
 			}
 			if (inumber) {
 				unsigned l = strnlen(name, sbi->s_namelen);
+				/* 循环copy所有目录项,失败就退出 */
 				if (!dir_emit(ctx, name, l,
 					      inumber, DT_UNKNOWN)) {
 					dir_put_page(page);

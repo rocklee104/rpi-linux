@@ -38,8 +38,11 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
 
 	res = -ENOENT;
 	if (!IS_DEADDIR(inode)) {
+		/* 遍历器的初始pos需要从file中读取 */
 		ctx->pos = file->f_pos;
+		/* 具体文件系统的readdir,读取所有的目录项 */
 		res = file->f_op->iterate(file, ctx);
+		/* 遍历器的pos改变,file需要从遍历器中更新pos */
 		file->f_pos = ctx->pos;
 		fsnotify_access(file);
 		file_accessed(file);

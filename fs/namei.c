@@ -2284,6 +2284,7 @@ EXPORT_SYMBOL(vfs_path_lookup);
  * Note that this routine is purely a helper for filesystem usage and should
  * not be called by generic code.
  */
+/* 在dentry下开始搜索与name匹配的dentry */
 struct dentry *lookup_one_len(const char *name, struct dentry *base, int len)
 {
 	struct qstr this;
@@ -2298,11 +2299,13 @@ struct dentry *lookup_one_len(const char *name, struct dentry *base, int len)
 	if (!len)
 		return ERR_PTR(-EACCES);
 
+	/* 禁止访问'.'和'..' */
 	if (unlikely(name[0] == '.')) {
 		if (len < 2 || (len == 2 && name[1] == '.'))
 			return ERR_PTR(-EACCES);
 	}
 
+	/* name中不允许带有'/'和'\0' */
 	while (len--) {
 		c = *(const unsigned char *)name++;
 		if (c == '/' || c == '\0')
@@ -2312,6 +2315,7 @@ struct dentry *lookup_one_len(const char *name, struct dentry *base, int len)
 	 * See if the low-level filesystem might want
 	 * to use its own hash..
 	 */
+	/* 使用底层文件系统的hash算法 */
 	if (base->d_flags & DCACHE_OP_HASH) {
 		int err = base->d_op->d_hash(base, &this);
 		if (err < 0)
@@ -3595,6 +3599,7 @@ int vfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	if (max_links && dir->i_nlink >= max_links)
 		return -EMLINK;
 
+	/* 调用底层文件系统的mkdir */
 	error = dir->i_op->mkdir(dir, dentry, mode);
 	if (!error)
 		fsnotify_mkdir(dir, dentry);

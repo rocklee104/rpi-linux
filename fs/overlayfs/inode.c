@@ -74,6 +74,7 @@ out:
 	return err;
 }
 
+/* overlayfs文件使用的getattr */
 static int ovl_getattr(struct vfsmount *mnt, struct dentry *dentry,
 			 struct kstat *stat)
 {
@@ -83,6 +84,7 @@ static int ovl_getattr(struct vfsmount *mnt, struct dentry *dentry,
 	return vfs_getattr(&realpath, stat);
 }
 
+/* 检查inode是否有mask的权限 */
 int ovl_permission(struct inode *inode, int mask)
 {
 	struct ovl_entry *oe;
@@ -93,6 +95,7 @@ int ovl_permission(struct inode *inode, int mask)
 	int err;
 
 	if (S_ISDIR(inode->i_mode)) {
+		/* 对于目录来说,ovl_entry保存在inode->i_private */
 		oe = inode->i_private;
 	} else if (mask & MAY_NOT_BLOCK) {
 		return -ECHILD;
@@ -101,6 +104,7 @@ int ovl_permission(struct inode *inode, int mask)
 		 * For non-directories find an alias and get the info
 		 * from there.
 		 */
+		/* 对于文件来说,ovl_entry保存在dentry->i_private */
 		alias = d_find_any_alias(inode);
 		if (WARN_ON(!alias))
 			return -ENOENT;
@@ -111,6 +115,7 @@ int ovl_permission(struct inode *inode, int mask)
 	realdentry = ovl_entry_real(oe, &is_upper);
 
 	/* Careful in RCU walk mode */
+	/* 获取真实路径的inode */
 	realinode = ACCESS_ONCE(realdentry->d_inode);
 	if (!realinode) {
 		WARN_ON(!(mask & MAY_NOT_BLOCK));
@@ -118,6 +123,7 @@ int ovl_permission(struct inode *inode, int mask)
 		goto out_dput;
 	}
 
+	/* 检查是否可写 */
 	if (mask & MAY_WRITE) {
 		umode_t mode = realinode->i_mode;
 
@@ -135,6 +141,18 @@ int ovl_permission(struct inode *inode, int mask)
 		 * upper layer.
 		 */
 		err = -EROFS;
+		/*
+		 * 如果overlayfs本身只读,不要返回EROFS,因为当前overlayfs
+		 * 属于另一个文件系统的lower时就会出现这种情况.
+		 *
+		 * 如果:
+		 * 1. 有upper dir
+		 * 2. overlayfs内的inode可写
+		 * 3. 真实路径的inode只读
+		 * 4. 是普通文件,目录,符号链接
+		 *
+		 * 返回"只读文件系统".
+		 */
 		if (is_upper && !IS_RDONLY(inode) && IS_RDONLY(realinode) &&
 		    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
 			goto out_dput;
@@ -403,6 +421,7 @@ static const struct inode_operations ovl_symlink_inode_operations = {
 	.removexattr	= ovl_removexattr,
 };
 
+/* 创建vfs   inode,并根据不同的mode给予不同的操作函数 */
 struct inode *ovl_new_inode(struct super_block *sb, umode_t mode,
 			    struct ovl_entry *oe)
 {
@@ -416,6 +435,7 @@ struct inode *ovl_new_inode(struct super_block *sb, umode_t mode,
 
 	inode->i_ino = get_next_ino();
 	inode->i_mode = mode;
+	/* overlay的inode不更新atime,ctime,mtime */
 	inode->i_flags |= S_NOATIME | S_NOCMTIME;
 
 	switch (mode) {

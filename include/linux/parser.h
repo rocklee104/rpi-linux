@@ -17,9 +17,11 @@ struct match_token {
 typedef struct match_token match_table_t[];
 
 /* Maximum number of arguments that match_token will find in a pattern */
+/* match_token中%d,%s之类的参数不能超过3个 */
 enum {MAX_OPT_ARGS = 3};
 
 /* Describe the location within a string of a substring */
+/* 记录起始位置 */
 typedef struct {
 	char *from;
 	char *to;
